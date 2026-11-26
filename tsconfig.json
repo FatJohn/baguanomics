@@ -1,19 +1,19 @@
 {
-  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "composite": true,
-    "rootDir": "src",
+    "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
+    "resolveJsonModule": true,
+    "strict": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noUncheckedIndexedAccess": true,
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
     "types": ["node"],
-    "declaration": true,
-    "declarationMap": true,
-    "outDir": "dist"
+    "noEmit": true
   },
-  "references": [
-    { "path": "../shared" },
-    { "path": "../jobs" }
-  ],
-  "include": ["src/**/*"],
-  "exclude": ["**/*.test.ts", "dist/**"]
+  "include": ["src/**/*", "scripts/**/*", "*.config.ts"]
 }

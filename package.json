@@ -1,32 +1,39 @@
 {
-  "name": "@suanomics/prompt-research",
+  "name": "baguanomics",
   "type": "module",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "pnpm@12.21.0",
   "license": "Apache-2.0",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    }
+  "engines": {
+    "node": ">=26"
   },
   "scripts": {
-    "build": "tsc",
-    "test": "vitest run --passWithNoTests",
+    "prepare": "husky",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
     "type-check": "tsc --noEmit",
-    "lint": "eslint ."
+    "test": "vitest run",
+    "knip": "knip",
+    "distill": "tsx --env-file-if-exists=.env src/cli/prompt-research-distill.ts",
+    "compile": "tsx --env-file-if-exists=.env src/cli/prompt-research-compile.ts"
   },
   "dependencies": {
-    "@google/genai": "^2.32.0",
-    "@suanomics/jobs": "workspace:*",
-    "@suanomics/shared": "workspace:*",
-    "fast-xml-parser": "^5.12.0",
+    "@ai-sdk/anthropic": "^4.0.98",
+    "ai": "^7.0.164",
     "fastest-levenshtein": "^1.0.16",
     "youtube-transcript-plus": "^2.0.3",
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@antfu/eslint-config": "^10.0.0",
+    "@commitlint/cli": "^21.2.4",
+    "@commitlint/config-conventional": "^21.2.4",
     "@types/node": "^26.6.6",
+    "eslint": "^10.14.0",
+    "husky": "^9.1.7",
+    "knip": "^6.44.1",
+    "tsx": "^4.23.15",
     "typescript": "~6.0.3",
     "vitest": "^5.1.0"
   }
