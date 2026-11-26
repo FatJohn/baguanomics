@@ -1,8 +1,8 @@
 import type { TranscriptInput } from './deep-pipeline.js'
 import { describe, expect, it } from 'vitest'
+import { TEST_YT_VARS } from '../__fixtures__/forbidden-phrases.js'
 import { LENS_CONCURRENCY } from '../sources/yt-transcript/lens-extractors.js'
 import { EPISODE_CONCURRENCY } from './deep-pipeline.js'
-import { YT_PROMPT_VARS } from './prompt-vars.js'
 
 describe('transcriptInput shape', () => {
   it('accepts the canonical TranscriptInput shape', () => {
@@ -27,8 +27,8 @@ describe('runDeepPipeline export', () => {
   })
 
   it('yT_PROMPT_VARS is the expected import alongside', () => {
-    // sanity: YT_PROMPT_VARS keys present
-    expect(YT_PROMPT_VARS.sourceKindLabel).toBe('YouTube')
+    // sanity: TEST_YT_VARS keys present
+    expect(TEST_YT_VARS.sourceKindLabel).toBe('YouTube')
   })
 })
 

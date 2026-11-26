@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { extractVideoId, fetchTranscript, YoutubeError } from './youtube.js'
+import { extractVideoId, fetchTranscript, YoutubeError } from './transcript-fetcher.js'
 
 describe('extractVideoId', () => {
   it('extracts id from youtu.be short URL', () => {
@@ -63,15 +63,26 @@ describe('fetchTranscript', () => {
     mockFetchTranscript.mockReset()
   })
 
-  it('joins transcript segments with newline', async () => {
+  it('renders segments as timestamped lines (offset is seconds in v2)', async () => {
     mockFetchTranscript.mockResolvedValue([
       { text: '第一段', duration: 1, offset: 0, lang: 'zh-TW' },
-      { text: '第二段、含標點', duration: 1, offset: 2, lang: 'zh-TW' },
+      { text: '  ', duration: 1, offset: 1, lang: 'zh-TW' },
+      { text: '第二段、含標點', duration: 1, offset: 3725.6, lang: 'zh-TW' },
     ])
     const result = await fetchTranscript('abc12345678')
-    expect(result.transcript).toBe('第一段\n第二段、含標點')
-    expect(result.originalLength).toBe(result.transcript.length)
+    expect(result.text).toBe('[0:00] 第一段\n[1:02:05] 第二段、含標點')
+    expect(result.chars).toBe(result.text.length)
+    expect(result.segments).toEqual([{ offsetSec: 0, text: '第一段' }, { offsetSec: 3725, text: '第二段、含標點' }])
     expect(result.language).toBe('zh-TW')
+  })
+
+  it('falls back to zh-CN when zh-TW has no transcript', async () => {
+    mockFetchTranscript
+      .mockRejectedValueOnce(new Error('No transcripts are available in zh-TW'))
+      .mockResolvedValueOnce([{ text: '简体', duration: 1, offset: 0, lang: 'zh-CN' }])
+    const result = await fetchTranscript('abc12345678')
+    expect(result.language).toBe('zh-CN')
+    expect(mockFetchTranscript).toHaveBeenNthCalledWith(2, 'abc12345678', { lang: 'zh-CN' })
   })
 
   it('throws YoutubeError no_transcript when package says Transcript is disabled', async () => {

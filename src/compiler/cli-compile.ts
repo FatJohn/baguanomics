@@ -1,98 +1,58 @@
-import type { CompiledPrompts } from './compiler.js'
+import type { CompiledCandidate } from './compiler.js'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { join, resolve } from 'node:path'
+import { loadSpecs } from '../spec/load-specs.js'
 import { MergedDraftSchema } from '../types.js'
-import {
-
-  compilePrompts,
-  renderHeaderForAgentFile,
-  renderSystemTsFile,
-} from './compiler.js'
+import { compileCandidates } from './compiler.js'
 
 export interface RunCompileParams {
-  runId: string
-  outputsDir: string // apps/server/.prompt-research-out
-  promptsDir: string // packages/prompts/_candidates/<runId>
+  /** distill 的 run 目錄，內含 merged-analyzer-prompt-draft.json */
+  runDir: string
+  /** suanomics 的 docs/prompt-specs 目錄 */
+  specsDir: string
 }
 
 export interface RunCompileResult {
-  runId: string
-  compiled: CompiledPrompts
-  promptsDir: string
+  outDir: string
+  candidates: CompiledCandidate[]
   writtenPaths: string[]
 }
 
+/** 讀 draft 與規格檔，寫 <runDir>/compiled/ 下的 candidate、diff 與 summary.json。不覆蓋 suanomics 的任何檔案。 */
 export async function runCompile(p: RunCompileParams): Promise<RunCompileResult> {
-  const draftPath = resolve(p.outputsDir, p.runId, 'merged-analyzer-prompt-draft.json')
-  const draftRaw = await readFile(draftPath, 'utf-8')
-  const draft = MergedDraftSchema.parse(JSON.parse(draftRaw))
+  const draftPath = resolve(p.runDir, 'merged-analyzer-prompt-draft.json')
+  const draft = MergedDraftSchema.parse(JSON.parse(await readFile(draftPath, 'utf8')))
+  const specs = await loadSpecs(resolve(p.specsDir))
+  const candidates = compileCandidates(specs, draft)
 
-  const compiled = compilePrompts({ draft, runId: p.runId })
-
-  const generatedAt = new Date().toISOString()
-  const sources = draft.sources.map((s) => {
-    const ref = draft.rawSourceRefs.find(r => r.sourceSlug === s.slug)
-    const result: { slug: string, refUrl?: string } = { slug: s.slug }
-    if (ref?.ref.url)
-      result.refUrl = ref.ref.url
-    return result
-  })
-  const header = renderHeaderForAgentFile({ runId: p.runId, sources, generatedAt })
-
-  await mkdir(p.promptsDir, { recursive: true })
-
+  const outDir = resolve(p.runDir, 'compiled')
+  await mkdir(join(outDir, 'candidates'), { recursive: true })
+  await mkdir(join(outDir, 'diffs'), { recursive: true })
   const writtenPaths: string[] = []
-
-  // _shared: no imports (it IS the shared preamble)
-  const sharedPath = resolve(p.promptsDir, '_shared.system.ts')
-  await writeFile(
-    sharedPath,
-    renderSystemTsFile({ exportName: 'SHARED_PREAMBLE', promptBody: compiled.shared, header }),
-    'utf-8',
-  )
-  writtenPaths.push(sharedPath)
-
-  // 3 agents all import SHARED_PREAMBLE
-  const agentImports = ['{ SHARED_PREAMBLE } from \'./_shared.system.js\'']
-
-  const decomposerPath = resolve(p.promptsDir, 'decomposer.system.ts')
-  await writeFile(
-    decomposerPath,
-    renderSystemTsFile({
-      exportName: 'DECOMPOSER_SYSTEM_PROMPT',
-      promptBody: compiled.decomposer,
-      header,
-      imports: agentImports,
-    }),
-    'utf-8',
-  )
-  writtenPaths.push(decomposerPath)
-
-  const analystPath = resolve(p.promptsDir, 'analyst.system.ts')
-  await writeFile(
-    analystPath,
-    renderSystemTsFile({
-      exportName: 'ANALYST_SYSTEM_PROMPT',
-      promptBody: compiled.analyst,
-      header,
-      imports: agentImports,
-    }),
-    'utf-8',
-  )
-  writtenPaths.push(analystPath)
-
-  const synthesizerPath = resolve(p.promptsDir, 'synthesizer.system.ts')
-  await writeFile(
-    synthesizerPath,
-    renderSystemTsFile({
-      exportName: 'SYNTHESIZER_SYSTEM_PROMPT',
-      promptBody: compiled.synthesizer,
-      header,
-      imports: agentImports,
-    }),
-    'utf-8',
-  )
-  writtenPaths.push(synthesizerPath)
-
-  return { runId: p.runId, compiled, promptsDir: p.promptsDir, writtenPaths }
+  for (const c of candidates) {
+    const base = `${c.agent}.${c.promptName}`
+    const candidatePath = join(outDir, 'candidates', `${base}.txt`)
+    const diffPath = join(outDir, 'diffs', `${base}.diff`)
+    await writeFile(candidatePath, c.candidate, 'utf8')
+    await writeFile(diffPath, c.diff, 'utf8')
+    writtenPaths.push(candidatePath, diffPath)
+  }
+  const summaryPath = join(outDir, 'summary.json')
+  const summary = {
+    draft: draftPath,
+    specsDir: resolve(p.specsDir),
+    sources: draft.sources.map(s => s.slug),
+    skippedAgents: specs.filter(s => s.frameStyle === 'none' || s.prompts.length === 0).map(s => s.agent),
+    candidates: candidates.map(c => ({
+      agent: c.agent,
+      prompt: c.promptName,
+      spec: c.specPath,
+      addedLines: c.diff.split('\n').filter(l => l.startsWith('+') && !l.startsWith('+++')).length,
+      droppedFrames: c.droppedFrames,
+      droppedTerms: c.droppedTerms,
+    })),
+  }
+  await writeFile(summaryPath, `${JSON.stringify(summary, null, 2)}\n`, 'utf8')
+  writtenPaths.push(summaryPath)
+  return { outDir, candidates, writtenPaths }
 }

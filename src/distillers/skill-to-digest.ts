@@ -1,15 +1,8 @@
 import type { Digest, SourceKind } from '../types.js'
-import { FORBIDDEN_PHRASES } from '@suanomics/shared'
-import { callGemini } from '../gemini-client.js'
-import { extractJson } from '../sources/yt-transcript/gemini-json.js'
-import { DigestSchema } from '../types.js'
-import { digestResponseSchema } from './digest-response-schema.js'
-import { hashFrameId, hashRedFlagId, hashVocabId } from './id-utils.js'
+import { distillToDigest } from './build-digest.js'
 
-const MAX_ATTEMPTS = 3
-
-export function buildSkillDistillSystemPrompt(): string {
-  const forbiddenList = FORBIDDEN_PHRASES.map(p => `「${p}」`).join('、')
+export function buildSkillDistillSystemPrompt(forbiddenPhrases: readonly string[]): string {
+  const forbiddenList = forbiddenPhrases.map(p => `「${p}」`).join('、')
   return `你是一個「分析框架提煉器」。讀給你的內容是某位分析師 / skill author 的
 分析方法論。你的任務是抽出可以**直接用來分析單則財經新聞事件**的 framework
 片段、而不是總結原文內容。
@@ -46,58 +39,15 @@ export interface SkillDistillParams {
   sourceKind: SourceKind
   rawContent: string
   rawSourceRef: Digest['rawSourceRef']
+  forbiddenPhrases: readonly string[]
 }
 
 export async function distillSkillToDigest(params: SkillDistillParams): Promise<Digest> {
-  const systemPrompt = buildSkillDistillSystemPrompt()
+  const systemPrompt = buildSkillDistillSystemPrompt(params.forbiddenPhrases)
   const userContent = `sourceSlug: ${params.sourceSlug}\nsourceKind: ${params.sourceKind}\n\n---\n\n${params.rawContent}`
-
-  let lastErr: unknown
-  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    try {
-      const raw = await callGemini({
-        systemPrompt,
-        userContent,
-        responseSchema: digestResponseSchema,
-      })
-      const parsed = extractJson(raw) as Record<string, unknown>
-      // id は LLM に生成させず、parse 後に安定 hash で付与する（LLM 生成は不安定）
-      const llmFrames = (parsed.analystFrames as Array<Record<string, unknown>> | undefined) ?? []
-      const llmVocab = (parsed.vocabulary as Array<Record<string, unknown>> | undefined) ?? []
-      const llmCompliance = parsed.compliance as Record<string, unknown> | undefined
-      const llmRedFlags = (llmCompliance?.redFlags as Array<string | Record<string, unknown>> | undefined) ?? []
-      const digest = DigestSchema.parse({
-        ...parsed,
-        sourceSlug: params.sourceSlug,
-        sourceKind: params.sourceKind,
-        generatedAt: new Date().toISOString(),
-        rawSourceRef: params.rawSourceRef,
-        analystFrames: llmFrames.map(f => ({
-          ...f,
-          id: hashFrameId(String(f.name ?? ''), String(f.whenToApply ?? '')),
-        })),
-        vocabulary: llmVocab.map(v => ({
-          ...v,
-          id: hashVocabId(String(v.preferred ?? '')),
-        })),
-        compliance: llmCompliance
-          ? {
-              ...llmCompliance,
-              redFlags: llmRedFlags.map((rf) => {
-                // LLM may return strings or objects; normalize to {id, rule}
-                const rule = typeof rf === 'string' ? rf : String((rf as Record<string, unknown>).rule ?? '')
-                return { id: hashRedFlagId(rule), rule }
-              }),
-            }
-          : undefined,
-      })
-      return digest
-    }
-    catch (err) {
-      lastErr = err
-      if (attempt === MAX_ATTEMPTS - 1)
-        break
-    }
-  }
-  throw lastErr ?? new Error('skill distill failed after retries')
+  return distillToDigest('distill', systemPrompt, userContent, {
+    sourceSlug: params.sourceSlug,
+    sourceKind: params.sourceKind,
+    rawSourceRef: params.rawSourceRef,
+  })
 }

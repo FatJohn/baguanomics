@@ -4,7 +4,7 @@
 // Policy: runtime modules use explicit named re-exports so new internal helpers
 // don't leak automatically. `./schemas.js` uses wildcard because every Zod schema
 // + inferred type defined there IS part of the public contract — callers iterate
-// lens schemas, build typed outputs, etc. `gemini-json.ts`, `response-schemas.ts`,
+// lens schemas, build typed outputs, etc. `response-schemas.ts`
 // and `prompts.ts` internals stay private; only the `LensName` key type from
 // `prompts.ts` is re-exported because consumers iterate lens keys.
 //
@@ -24,4 +24,5 @@ export type { LensName } from './prompts.js'
 export { buildRunSummaryMarkdown, type RunSummaryInput } from './run-summary.js'
 export * from './schemas.js'
 export { runSegmenter } from './segmenter.js'
-export { type FetchedTranscript, fetchTranscript } from './transcript-fetcher.js'
+export { extractVideoId, type FetchedTranscript, fetchTranscript, YoutubeError } from './transcript-fetcher.js'
+export { fetchVideoRef } from './video-meta.js'

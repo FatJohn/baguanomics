@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { PODCAST_PROMPT_VARS, YT_PROMPT_VARS } from '../pipeline/prompt-vars.js'
+import { TEST_YT_VARS } from '../__fixtures__/forbidden-phrases.js'
 import { buildTranscriptToDigestPrompt, extractVideoIdsFromEpisodes } from './transcript-to-digest.js'
 
 // Pre-refactor baseline — captured BEFORE 把 yt 字眼參數化、用來保 yt path
@@ -20,35 +20,20 @@ const YT_DISTILLER_PROMPT_BASELINE = `你收到一份來自 YT KOL 直播 7 集�
 【禁止】輸出含「建議買/賣/持有」等指令式；不得含個股 ticker + 方向性動詞組合。`
 
 describe('buildTranscriptToDigestPrompt', () => {
-  it('matches yt baseline byte-for-byte when given YT_PROMPT_VARS', () => {
+  it('matches yt baseline byte-for-byte when given TEST_YT_VARS', () => {
     // Invariance gate：注入 yt vars 後輸出必須與 pre-refactor baseline 完全一致、
-    // 避免 podcast 參數化時意外改動 yt prompt 字面。
-    expect(buildTranscriptToDigestPrompt(YT_PROMPT_VARS)).toBe(YT_DISTILLER_PROMPT_BASELINE)
+    expect(buildTranscriptToDigestPrompt(TEST_YT_VARS)).toBe(YT_DISTILLER_PROMPT_BASELINE)
   })
 
-  it('mentions DigestSchema regardless of source', () => {
-    expect(buildTranscriptToDigestPrompt(YT_PROMPT_VARS)).toContain('DigestSchema')
-    expect(buildTranscriptToDigestPrompt(PODCAST_PROMPT_VARS)).toContain('DigestSchema')
-  })
-
-  it('frames source kind from vars (yt → YT KOL 直播, podcast → Podcast KOL 節目)', () => {
-    expect(buildTranscriptToDigestPrompt(YT_PROMPT_VARS)).toContain('YT KOL 直播')
-    expect(buildTranscriptToDigestPrompt(PODCAST_PROMPT_VARS)).toContain('Podcast KOL 節目')
-  })
-
-  it('does not leak yt vocab into podcast prompt', () => {
-    const podcastPrompt = buildTranscriptToDigestPrompt(PODCAST_PROMPT_VARS)
-    expect(podcastPrompt).not.toContain('YT KOL')
-    expect(podcastPrompt).not.toContain('直播')
+  it('mentions DigestSchema', () => {
+    expect(buildTranscriptToDigestPrompt(TEST_YT_VARS)).toContain('DigestSchema')
   })
 })
 
 describe('buildTranscriptToDigestPrompt additional coverage', () => {
   it('keeps digestTitlePrefix-derived word for distiller source label', () => {
     // yt: digestTitlePrefix='YT Analyst Digest' → first word 'YT'
-    // podcast: digestTitlePrefix='Podcast Analyst Digest' → first word 'Podcast'
-    expect(buildTranscriptToDigestPrompt(YT_PROMPT_VARS).split('\n')[0]).toContain('YT')
-    expect(buildTranscriptToDigestPrompt(PODCAST_PROMPT_VARS).split('\n')[0]).toContain('Podcast')
+    expect(buildTranscriptToDigestPrompt(TEST_YT_VARS).split('\n')[0]).toContain('YT')
   })
 })
 

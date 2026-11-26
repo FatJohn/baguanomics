@@ -103,7 +103,7 @@ describe('mergeCompliance', () => {
     const a = digest('a', [{ whenToApply: 'x' }])
     a.compliance = { redFlags: [{ id: 'cccc0001', rule: 'r1' }], suggestedDisclaimer: 'd1' }
     const b = digest('b', [{ whenToApply: 'x' }])
-    b.compliance = { redFlags: [{ id: 'dddd0002', rule: 'r2' }] }
+    b.compliance = { redFlags: [{ id: 'dddd0002', rule: 'r2' }], suggestedDisclaimer: undefined }
     const merged = mergeCompliance([a, b])
     expect(merged.redFlags.sort()).toEqual(['r1', 'r2'])
     expect(merged.disclaimers).toEqual(['d1'])

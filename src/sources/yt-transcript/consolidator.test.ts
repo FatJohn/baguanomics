@@ -2,20 +2,19 @@ import type { EpisodeL3 } from './schemas.js'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import process from 'node:process'
-
-import { GoogleGenAI } from '@google/genai'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { YT_PROMPT_VARS } from '../../pipeline/prompt-vars.js'
+
+import { TEST_YT_VARS } from '../../__fixtures__/forbidden-phrases.js'
+import { callStructured } from '../../llm.js'
 import { runConsolidator } from './consolidator.js'
 import { createLogger } from './logger.js'
 
-vi.mock('@google/genai', () => ({
-  GoogleGenAI: vi.fn().mockImplementation(() => ({
-    models: { generateContent: vi.fn() },
-  })),
-  Type: {},
+vi.mock('../../llm.js', async importOriginal => ({
+  ...(await importOriginal<typeof import('../../llm.js')>()),
+  callStructured: vi.fn(),
 }))
+
+const mockCall = vi.mocked(callStructured)
 
 const SAMPLE_L3: EpisodeL3[] = [{
   episodeId: 'ep1',
@@ -55,14 +54,8 @@ const COMPLIANT_SUPPLEMENT = `# YT Analyst Digest · run-1
 
 const UNCOMPLIANT_SUPPLEMENT = COMPLIANT_SUPPLEMENT.replace('無關鍵事件', '台積電偏多格局延續')
 
-function mockClientWith(...responses: Array<{ text: string }>) {
-  const gc = vi.fn()
-  for (const response of responses)
-    gc.mockResolvedValueOnce(response)
-
-  const client = { models: { generateContent: gc } }
-  vi.mocked(GoogleGenAI).mockImplementation(() => client as unknown as InstanceType<typeof GoogleGenAI>)
-  return { gc }
+function mockReturns(...markdowns: string[]) {
+  for (const markdown of markdowns) mockCall.mockResolvedValueOnce({ markdown })
 }
 
 describe('runConsolidator', () => {
@@ -70,8 +63,7 @@ describe('runConsolidator', () => {
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'cons-'))
-    vi.clearAllMocks()
-    process.env.GEMINI_API_KEY = 'fake'
+    mockCall.mockReset()
   })
 
   afterEach(() => {
@@ -79,33 +71,36 @@ describe('runConsolidator', () => {
   })
 
   it('shouldReturnSupplementWhenCompliant', async () => {
-    mockClientWith({ text: COMPLIANT_SUPPLEMENT })
+    mockReturns(COMPLIANT_SUPPLEMENT)
     const logger = createLogger({ runId: 'run-1', runDir: dir })
-    const result = await runConsolidator(SAMPLE_L3, 'run-1', logger, YT_PROMPT_VARS)
+    const result = await runConsolidator(SAMPLE_L3, 'run-1', logger, TEST_YT_VARS)
     expect(result).toContain('Top Macro Themes')
     expect(result).toContain('Compliance Note')
     logger.close()
   })
 
   it('shouldRetryWhenContainsTickerDirection', async () => {
-    const { gc } = mockClientWith(
-      { text: UNCOMPLIANT_SUPPLEMENT },
-      { text: COMPLIANT_SUPPLEMENT },
-    )
+    mockReturns(UNCOMPLIANT_SUPPLEMENT, COMPLIANT_SUPPLEMENT)
     const logger = createLogger({ runId: 'run-2', runDir: dir })
-    const result = await runConsolidator(SAMPLE_L3, 'run-2', logger, YT_PROMPT_VARS)
+    const result = await runConsolidator(SAMPLE_L3, 'run-2', logger, TEST_YT_VARS)
     expect(result).not.toContain('台積電偏多')
-    expect(gc).toHaveBeenCalledTimes(2)
+    expect(mockCall).toHaveBeenCalledTimes(2)
     logger.close()
   })
 
-  it('shouldThrowAfter2RetriesAllUncompliant', async () => {
-    mockClientWith(
-      { text: UNCOMPLIANT_SUPPLEMENT },
-      { text: UNCOMPLIANT_SUPPLEMENT },
-    )
+  it('throws the compliance error after CONSOLIDATOR_MAX_ATTEMPTS uncompliant outputs', async () => {
+    mockReturns(UNCOMPLIANT_SUPPLEMENT, UNCOMPLIANT_SUPPLEMENT, UNCOMPLIANT_SUPPLEMENT)
     const logger = createLogger({ runId: 'run-3', runDir: dir })
-    await expect(runConsolidator(SAMPLE_L3, 'run-3', logger, YT_PROMPT_VARS)).rejects.toThrow()
+    await expect(runConsolidator(SAMPLE_L3, 'run-3', logger, TEST_YT_VARS)).rejects.toThrow(/^compliance:forbidden:偏多/)
+    expect(mockCall).toHaveBeenCalledTimes(3)
+    logger.close()
+  })
+
+  it('rejects a forbidden phrase taken from the spec list, not a built-in list', async () => {
+    mockReturns(COMPLIANT_SUPPLEMENT.replace('無關鍵事件', '自訂禁語出現'), COMPLIANT_SUPPLEMENT)
+    const logger = createLogger({ runId: 'run-4', runDir: dir })
+    await runConsolidator(SAMPLE_L3, 'run-4', logger, { ...TEST_YT_VARS, forbiddenPhrases: ['自訂禁語'] })
+    expect(mockCall).toHaveBeenCalledTimes(2)
     logger.close()
   })
 })

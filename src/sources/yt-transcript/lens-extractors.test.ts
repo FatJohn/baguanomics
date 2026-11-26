@@ -1,26 +1,19 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import process from 'node:process'
-import { GoogleGenAI } from '@google/genai'
-
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { YT_PROMPT_VARS } from '../../pipeline/prompt-vars.js'
+
+import { TEST_YT_VARS } from '../../__fixtures__/forbidden-phrases.js'
+import { callStructured, LlmOutputError } from '../../llm.js'
 import { LENS_CONCURRENCY, runAllLenses, runLens } from './lens-extractors.js'
 import { createLogger } from './logger.js'
 
-vi.mock('@google/genai', () => ({
-  GoogleGenAI: vi.fn().mockImplementation(() => ({
-    models: { generateContent: vi.fn() },
-  })),
-  Type: {
-    OBJECT: 'OBJECT',
-    STRING: 'STRING',
-    ARRAY: 'ARRAY',
-    NUMBER: 'NUMBER',
-    INTEGER: 'INTEGER',
-  },
+vi.mock('../../llm.js', async importOriginal => ({
+  ...(await importOriginal<typeof import('../../llm.js')>()),
+  callStructured: vi.fn(),
 }))
+
+const mockCall = vi.mocked(callStructured)
 
 const VALID_EVENTS = {
   episodeId: 'ep1',
@@ -58,36 +51,27 @@ const VALID_ENTITIES = {
   ],
 }
 
-function mockClientWith(...responses: Array<{ text: string }>) {
-  const gc = vi.fn()
-  for (const response of responses)
-    gc.mockResolvedValueOnce(response)
-
-  const client = { models: { generateContent: gc } }
-  vi.mocked(GoogleGenAI).mockImplementation(() => client as unknown as InstanceType<typeof GoogleGenAI>)
-  return { gc }
+function mockReturns(...responses: unknown[]) {
+  for (const r of responses) mockCall.mockResolvedValueOnce(r)
 }
 
-interface GenerateContentParams {
-  config?: { responseSchema?: { properties?: Record<string, unknown> } }
+interface CallParams { stage: string }
+
+const EMPTY_KEY: Record<string, string> = {
+  'lens:events': 'events',
+  'lens:cited_sources': 'sources',
+  'lens:entities': 'entities',
+  'lens:reasoning_chains': 'chains',
+  'lens:impacts': 'impacts',
+  'lens:analyst_frames': 'frames',
 }
 
-/** 依 responseSchema 的 key 辨識這次呼叫是哪個 lens，回傳一組通過該 lens schema 的空陣列回應。 */
-function lensSuccessTextFor(params: GenerateContentParams): string {
-  const keys = Object.keys(params.config?.responseSchema?.properties ?? {})
-  if (keys.includes('events'))
-    return JSON.stringify({ episodeId: 'ep1', events: [] })
-  if (keys.includes('sources'))
-    return JSON.stringify({ episodeId: 'ep1', sources: [] })
-  if (keys.includes('entities'))
-    return JSON.stringify({ episodeId: 'ep1', entities: [] })
-  if (keys.includes('chains'))
-    return JSON.stringify({ episodeId: 'ep1', chains: [] })
-  if (keys.includes('impacts'))
-    return JSON.stringify({ episodeId: 'ep1', impacts: [] })
-  if (keys.includes('frames'))
-    return JSON.stringify({ episodeId: 'ep1', frames: [] })
-  throw new Error(`unclassified lens call in test mock: ${keys.join(',')}`)
+/** 依 stage 辨識這次呼叫是哪個 lens，回傳一組通過該 lens schema 的空陣列回應。 */
+function lensSuccessFor(params: CallParams): unknown {
+  const key = EMPTY_KEY[params.stage]
+  if (!key)
+    throw new Error(`unclassified lens call in test mock: ${params.stage}`)
+  return { episodeId: 'ep1', [key]: [] }
 }
 
 describe('runLens', () => {
@@ -95,8 +79,7 @@ describe('runLens', () => {
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'lens-'))
-    vi.clearAllMocks()
-    process.env.GEMINI_API_KEY = 'fake-key'
+    mockCall.mockReset()
   })
 
   afterEach(() => {
@@ -104,22 +87,19 @@ describe('runLens', () => {
   })
 
   it('shouldValidateAndReturnForEvents', async () => {
-    mockClientWith({ text: JSON.stringify(VALID_EVENTS) })
+    mockReturns(VALID_EVENTS)
     const logger = createLogger({ runId: 'r1', runDir: dir })
-    const result = await runLens('events', 'fake transcript', 'ep1', logger, YT_PROMPT_VARS)
+    const result = await runLens('events', 'fake transcript', 'ep1', logger, TEST_YT_VARS)
     expect(result.episodeId).toBe('ep1')
     expect(result.events[0]?.title).toBe('美國 CPI 公布')
     logger.close()
   })
 
   it('shouldRejectEntitiesWithTickerKind', async () => {
-    const { gc } = mockClientWith(
-      { text: JSON.stringify(INVALID_ENTITIES) },
-      { text: JSON.stringify(VALID_ENTITIES) },
-    )
+    mockReturns(INVALID_ENTITIES, VALID_ENTITIES)
     const logger = createLogger({ runId: 'r2', runDir: dir })
-    const result = await runLens('entities', 'fake transcript', 'ep1', logger, YT_PROMPT_VARS)
-    expect(gc).toHaveBeenCalledTimes(2)
+    const result = await runLens('entities', 'fake transcript', 'ep1', logger, TEST_YT_VARS)
+    expect(mockCall).toHaveBeenCalledTimes(2)
     expect(result.entities[0]?.kind).toBe('sector')
     logger.close()
   })
@@ -130,8 +110,7 @@ describe('runAllLenses', () => {
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'lens-all-'))
-    vi.clearAllMocks()
-    process.env.GEMINI_API_KEY = 'fake-key'
+    mockCall.mockReset()
   })
 
   afterEach(() => {
@@ -143,21 +122,19 @@ describe('runAllLenses', () => {
   it('caps concurrent lens calls at LENS_CONCURRENCY and preserves LENS_ORDER in the result', async () => {
     let active = 0
     let maxActive = 0
-    const gc = vi.fn(async (params: GenerateContentParams) => {
+    mockCall.mockImplementation(async (params: CallParams) => {
       active++
       maxActive = Math.max(maxActive, active)
       await new Promise(resolve => setTimeout(resolve, 20))
       active--
-      return { text: lensSuccessTextFor(params) }
+      return lensSuccessFor(params)
     })
-    const client = { models: { generateContent: gc } }
-    vi.mocked(GoogleGenAI).mockImplementation(() => client as unknown as InstanceType<typeof GoogleGenAI>)
 
     const logger = createLogger({ runId: 'r-all', runDir: dir })
-    const result = await runAllLenses('fake transcript', 'ep1', logger, YT_PROMPT_VARS)
+    const result = await runAllLenses('fake transcript', 'ep1', logger, TEST_YT_VARS)
     logger.close()
 
-    expect(gc).toHaveBeenCalledTimes(6)
+    expect(mockCall).toHaveBeenCalledTimes(6)
     expect(maxActive).toBe(LENS_CONCURRENCY)
     expect(Object.keys(result)).toEqual([
       'events',
@@ -171,17 +148,14 @@ describe('runAllLenses', () => {
 
   // 錯誤語意要跟原本 Promise.all 一致：任一 lens 重試到底仍失敗，整包最終要 reject。
   it('rejects when one lens exhausts retries, matching Promise.all error semantics', async () => {
-    const gc = vi.fn(async (params: GenerateContentParams) => {
-      const keys = Object.keys(params.config?.responseSchema?.properties ?? {})
-      if (keys.includes('entities'))
-        return { text: 'not-json' }
-      return { text: lensSuccessTextFor(params) }
+    mockCall.mockImplementation(async (params: CallParams) => {
+      if (params.stage === 'lens:entities')
+        throw new LlmOutputError(params.stage, new Error('bad'))
+      return lensSuccessFor(params)
     })
-    const client = { models: { generateContent: gc } }
-    vi.mocked(GoogleGenAI).mockImplementation(() => client as unknown as InstanceType<typeof GoogleGenAI>)
 
     const logger = createLogger({ runId: 'r-all-fail', runDir: dir })
-    await expect(runAllLenses('fake transcript', 'ep1', logger, YT_PROMPT_VARS)).rejects.toThrow()
+    await expect(runAllLenses('fake transcript', 'ep1', logger, TEST_YT_VARS)).rejects.toThrow()
     logger.close()
   })
 })

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CustomSourceConfigSchema, DigestSchema, MergedDraftSchema, PodcastRssConfigSchema, SkillSourceConfigSchema, SourceKindSchema, SourceSpecSchema, YtSourceConfigSchema } from './types.js'
+import { CustomSourceConfigSchema, DigestSchema, MergedDraftSchema, SkillSourceConfigSchema, SourceKindSchema, SourceSpecSchema, YtSourceConfigSchema } from './types.js'
 
 describe('digestSchema', () => {
   it('accepts minimal valid digest with required fields', () => {
@@ -100,39 +100,13 @@ describe('digestSchema', () => {
 })
 
 describe('sourceKindSchema', () => {
-  it.each(['yt-transcript', 'skill-markdown', 'custom-text', 'podcast-rss'])('accepts %s', (kind) => {
+  it.each(['yt-transcript', 'skill-markdown', 'custom-text'])('accepts %s', (kind) => {
     expect(SourceKindSchema.parse(kind)).toBe(kind)
   })
 
-  it('rejects unknown kind', () => {
+  it('rejects unknown kind (podcast-rss was dropped with Gemini STT)', () => {
     expect(() => SourceKindSchema.parse('pdf')).toThrow()
-  })
-})
-
-describe('podcastRssConfigSchema', () => {
-  it('accepts valid rssUrl + count', () => {
-    const cfg = PodcastRssConfigSchema.parse({
-      rssUrl: 'https://example.com/feed.xml',
-      count: 5,
-    })
-    expect(cfg.rssUrl).toBe('https://example.com/feed.xml')
-    expect(cfg.count).toBe(5)
-  })
-
-  it('applies default count = 5', () => {
-    const cfg = PodcastRssConfigSchema.parse({ rssUrl: 'https://example.com/feed.xml' })
-    expect(cfg.count).toBe(5)
-  })
-
-  it('rejects non-URL rssUrl', () => {
-    expect(() => PodcastRssConfigSchema.parse({ rssUrl: 'not-a-url' })).toThrow()
-  })
-
-  it('rejects negative count', () => {
-    expect(() => PodcastRssConfigSchema.parse({
-      rssUrl: 'https://example.com/feed.xml',
-      count: -1,
-    })).toThrow()
+    expect(() => SourceKindSchema.parse('podcast-rss')).toThrow()
   })
 })
 

@@ -1,87 +1,50 @@
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { runCompile } from './cli-compile.js'
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
+const here = dirname(fileURLToPath(import.meta.url))
+const SPECS_DIR = resolve(here, '../__fixtures__/specs')
 
-// 使用和 compiler.test.ts 相同的 fixture
-const FIXTURES_DIR = resolve(__dirname, '__fixtures__')
+let runDir: string
 
-let tmpDir: string
-let tmpOutputsDir: string
-let tmpPromptsDir: string
-
-beforeAll(async () => {
-  tmpDir = resolve(tmpdir(), `cli-compile-test-${Date.now()}`)
-  tmpOutputsDir = resolve(tmpDir, 'outputs')
-  tmpPromptsDir = resolve(tmpDir, 'prompts', 'test-run')
-
-  const runId = 'test-run'
-  const runOutputsDir = resolve(tmpOutputsDir, runId)
-  await mkdir(runOutputsDir, { recursive: true })
-
-  // 複製 sample-merged-draft.json 到 outputs/<runId>/
-  const draftJson = await readFile(resolve(FIXTURES_DIR, 'sample-merged-draft.json'), 'utf-8')
-  await writeFile(
-    resolve(runOutputsDir, 'merged-analyzer-prompt-draft.json'),
-    draftJson,
-    'utf-8',
-  )
+beforeEach(() => {
+  runDir = mkdtempSync(join(tmpdir(), 'cli-compile-test-'))
+  copyFileSync(resolve(here, '__fixtures__/sample-merged-draft.json'), join(runDir, 'merged-analyzer-prompt-draft.json'))
 })
 
-afterAll(async () => {
-  await rm(tmpDir, { recursive: true, force: true })
+afterEach(() => {
+  rmSync(runDir, { recursive: true, force: true })
 })
 
 describe('runCompile', () => {
-  it('returns writtenPaths array matching files actually written', async () => {
-    const result = await runCompile({
-      runId: 'test-run',
-      outputsDir: tmpOutputsDir,
-      promptsDir: tmpPromptsDir,
-    })
-    expect(result.writtenPaths).toBeInstanceOf(Array)
-    expect(result.writtenPaths.length).toBeGreaterThan(0)
-    for (const p of result.writtenPaths) {
-      expect(p).toMatch(/\.(system\.ts|ts)$/)
-    }
+  it('在 <runDir>/compiled 下寫 candidate、diff 與 summary.json，writtenPaths 與實際檔案一致', async () => {
+    const result = await runCompile({ runDir, specsDir: SPECS_DIR })
+    expect(result.outDir).toBe(join(runDir, 'compiled'))
+    expect(result.writtenPaths).toEqual([
+      join(runDir, 'compiled/candidates/analyst-tier1.ANALYST_TIER1_SYSTEM.txt'),
+      join(runDir, 'compiled/diffs/analyst-tier1.ANALYST_TIER1_SYSTEM.diff'),
+      join(runDir, 'compiled/candidates/synthesizer.SYNTHESIZER_SYSTEM.txt'),
+      join(runDir, 'compiled/diffs/synthesizer.SYNTHESIZER_SYSTEM.diff'),
+      join(runDir, 'compiled/summary.json'),
+    ])
+    for (const p of result.writtenPaths) expect(existsSync(p)).toBe(true)
+    expect(readFileSync(result.writtenPaths[0] ?? '', 'utf8')).toBe(result.candidates[0]?.candidate)
   })
 
-  it('writtenPaths contains exactly the 4 expected prompt files', async () => {
-    const result = await runCompile({
-      runId: 'test-run',
-      outputsDir: tmpOutputsDir,
-      promptsDir: tmpPromptsDir,
-    })
-    const basenames = result.writtenPaths.map(p => p.split('/').at(-1))
-    expect(basenames).toContain('_shared.system.ts')
-    expect(basenames).toContain('decomposer.system.ts')
-    expect(basenames).toContain('analyst.system.ts')
-    expect(basenames).toContain('synthesizer.system.ts')
-    expect(result.writtenPaths.length).toBe(4)
+  it('summary.json 列出來源、跳過的 agent 與每份候選的新增行數', async () => {
+    const result = await runCompile({ runDir, specsDir: SPECS_DIR })
+    const summary = JSON.parse(readFileSync(join(result.outDir, 'summary.json'), 'utf8'))
+    expect(summary.sources).toEqual(['skill-financial-analyst'])
+    expect(summary.skippedAgents).toEqual(['news-classifier', 'podcast-writer'])
+    expect(summary.candidates).toHaveLength(2)
+    expect(summary.candidates[0].addedLines).toBeGreaterThan(0)
   })
 
-  it('writtenPaths are absolute paths under promptsDir', async () => {
-    const result = await runCompile({
-      runId: 'test-run',
-      outputsDir: tmpOutputsDir,
-      promptsDir: tmpPromptsDir,
-    })
-    for (const p of result.writtenPaths) {
-      expect(p.startsWith(tmpPromptsDir)).toBe(true)
-    }
-  })
-
-  it('returns runId and promptsDir unchanged', async () => {
-    const result = await runCompile({
-      runId: 'test-run',
-      outputsDir: tmpOutputsDir,
-      promptsDir: tmpPromptsDir,
-    })
-    expect(result.runId).toBe('test-run')
-    expect(result.promptsDir).toBe(tmpPromptsDir)
+  it('run 目錄沒有 merged draft 時丟錯', async () => {
+    rmSync(join(runDir, 'merged-analyzer-prompt-draft.json'))
+    await expect(runCompile({ runDir, specsDir: SPECS_DIR })).rejects.toThrow(/merged-analyzer-prompt-draft\.json/)
   })
 })

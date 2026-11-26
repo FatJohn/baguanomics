@@ -1,20 +1,30 @@
-import { SourceSpecSchema } from '@suanomics/jobs'
 import { z } from 'zod'
 
-export { SourceSpecSchema } from '@suanomics/jobs'
-export type { SourceSpec } from '@suanomics/jobs'
-
-export const SourceKindSchema = z.enum(['yt-transcript', 'skill-markdown', 'custom-text', 'podcast-rss'])
+export const SourceKindSchema = z.enum(['yt-transcript', 'skill-markdown', 'custom-text'])
 export type SourceKind = z.infer<typeof SourceKindSchema>
+
+// 搬自 suanomics v0 packages/jobs/src/types.ts（原本是 job queue payload 的一部分）。
+export const SourceSpecSchema = z.object({
+  kind: SourceKindSchema,
+  slug: z.string().min(1),
+  displayName: z.string().min(1),
+  pipeline: z.enum(['light', 'deep']).default('light'),
+  config: z.record(z.string(), z.unknown()),
+})
+export type SourceSpec = z.infer<typeof SourceSpecSchema>
 
 // knip-ignore -- public API surface for source plugin authors (pipeline config types)
 export const PipelineKindSchema = z.enum(['deep', 'light'])
 // knip-ignore -- public API type for plugin authors
 export type PipelineKind = z.infer<typeof PipelineKindSchema>
 
+// playlistUrl 取頻道直播頁最新 count 集；videoUrls 直接指定影片（任一必填）。
 export const YtSourceConfigSchema = z.object({
-  playlistUrl: z.string().url(),
+  playlistUrl: z.string().url().optional(),
+  videoUrls: z.array(z.string().url()).min(1).optional(),
   count: z.number().int().positive().default(5),
+}).refine(c => (c.playlistUrl === undefined) !== (c.videoUrls === undefined), {
+  message: 'yt-transcript 的 config 要恰好提供 playlistUrl 或 videoUrls 其中一個',
 })
 // knip-ignore -- public API type for source config authors
 export type YtSourceConfig = z.infer<typeof YtSourceConfigSchema>
@@ -33,13 +43,6 @@ export const CustomSourceConfigSchema = z.object({
 })
 // knip-ignore -- public API type for source config authors
 export type CustomSourceConfig = z.infer<typeof CustomSourceConfigSchema>
-
-export const PodcastRssConfigSchema = z.object({
-  rssUrl: z.string().url(),
-  count: z.number().int().positive().default(5),
-})
-// knip-ignore -- public API type for source config authors
-export type PodcastRssConfig = z.infer<typeof PodcastRssConfigSchema>
 
 // --- Digest ---
 

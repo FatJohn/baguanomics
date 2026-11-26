@@ -1,0 +1,55 @@
+import { YT_PROMPT_VARS } from '../pipeline/prompt-vars.js'
+
+// 測試用禁用語：suanomics v0-legacy packages/shared/src/compliance.ts 的 FORBIDDEN_PHRASES 原樣複製。
+// 正式執行時禁用語從 suanomics 規格檔讀，這份只讓 prompt baseline 與測試有固定輸入。
+export const FIXTURE_FORBIDDEN_PHRASES: readonly string[] = Object.freeze([
+  '建議買',
+  '建議賣',
+  '建議加碼',
+  '建議減碼',
+  '建議持有',
+  '穩賺不賠',
+  '保證獲利',
+  '一定會漲',
+  '一定會跌',
+  // 拆成 price-prediction 專用句式、避免誤判「我一定會回覆你」這類日常語
+  '一定會回升',
+  '一定會回檔',
+  '一定會回到',
+  '建議攤平',
+  '建議停損',
+  '建議進場',
+  '建議出場',
+  // 軟推薦 / 方向性字眼（YT KOL 常用）
+  '可以考慮',
+  '值得考慮',
+  '值得關注',
+  '值得留意',
+  '值得追蹤',
+  '建議觀察',
+  '建議留意',
+  '避開',
+  '少碰',
+  '繞開',
+  '佈局',
+  '可以進場',
+  '可以出場',
+  '進場時機',
+  '出場時機',
+  '進場點',
+  '出場點',
+  '加碼時機',
+  '減碼時機',
+  '看多',
+  '看空',
+  '偏多',
+  '偏空',
+  '轉多',
+  '轉空',
+  '做多',
+  '做空',
+  '增持',
+  '減持',
+])
+
+export const TEST_YT_VARS = { ...YT_PROMPT_VARS, forbiddenPhrases: FIXTURE_FORBIDDEN_PHRASES }

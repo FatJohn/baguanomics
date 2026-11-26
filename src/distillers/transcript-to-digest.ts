@@ -1,16 +1,10 @@
 import type { DeepPipelinePromptVars } from '../pipeline/prompt-vars.js'
 import type { EpisodeL3 } from '../sources/yt-transcript/schemas.js'
 import type { Digest, SourceKind } from '../types.js'
-import { callGemini } from '../gemini-client.js'
-import { extractJson } from '../sources/yt-transcript/gemini-json.js'
-import { DigestSchema } from '../types.js'
-import { digestResponseSchema } from './digest-response-schema.js'
-import { hashFrameId, hashRedFlagId, hashVocabId } from './id-utils.js'
-
-const MAX_ATTEMPTS = 3
+import { distillToDigest } from './build-digest.js'
 
 /**
- * Builds the system prompt that asks Gemini to extract a Digest JSON from the
+ * Builds the system prompt that asks the LLM to extract a Digest JSON from the
  * consolidated md. yt-transcript 與 podcast-rss 共用、source-specific 字眼透過
  * `vars` 注入。yt 帶 `YT_PROMPT_VARS` 時與重構前 byte-for-byte 一致。
  *
@@ -50,54 +44,9 @@ export interface TranscriptToDigestParams {
 export async function distillTranscriptToDigest(params: TranscriptToDigestParams): Promise<Digest> {
   const systemPrompt = buildTranscriptToDigestPrompt(params.promptVars)
   const userContent = `sourceSlug: ${params.sourceSlug}\n\n---\n\n${params.consolidatedMarkdown}`
-  const episodeUrls = params.episodes.map(ep => ep.url)
-
-  let lastErr: unknown
-  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    try {
-      const raw = await callGemini({
-        systemPrompt,
-        userContent,
-        responseSchema: digestResponseSchema,
-      })
-      const parsed = extractJson(raw) as Record<string, unknown>
-      // id は LLM に生成させず、parse 後に安定 hash で付与する（LLM 生成は不安定）
-      const llmFrames = (parsed.analystFrames as Array<Record<string, unknown>> | undefined) ?? []
-      const llmVocab = (parsed.vocabulary as Array<Record<string, unknown>> | undefined) ?? []
-      const llmCompliance = parsed.compliance as Record<string, unknown> | undefined
-      const llmRedFlags = (llmCompliance?.redFlags as Array<string | Record<string, unknown>> | undefined) ?? []
-      const digest = DigestSchema.parse({
-        ...parsed,
-        sourceSlug: params.sourceSlug,
-        sourceKind: params.sourceKind,
-        generatedAt: new Date().toISOString(),
-        rawSourceRef: { url: episodeUrls[0] ?? undefined },
-        analystFrames: llmFrames.map(f => ({
-          ...f,
-          id: hashFrameId(String(f.name ?? ''), String(f.whenToApply ?? '')),
-        })),
-        vocabulary: llmVocab.map(v => ({
-          ...v,
-          id: hashVocabId(String(v.preferred ?? '')),
-        })),
-        compliance: llmCompliance
-          ? {
-              ...llmCompliance,
-              redFlags: llmRedFlags.map((rf) => {
-                // LLM may return strings or objects; normalize to {id, rule}
-                const rule = typeof rf === 'string' ? rf : String((rf as Record<string, unknown>).rule ?? '')
-                return { id: hashRedFlagId(rule), rule }
-              }),
-            }
-          : undefined,
-      })
-      return digest
-    }
-    catch (err) {
-      lastErr = err
-      if (attempt === MAX_ATTEMPTS - 1)
-        break
-    }
-  }
-  throw lastErr ?? new Error('transcript-to-digest failed after retries')
+  return distillToDigest('distill', systemPrompt, userContent, {
+    sourceSlug: params.sourceSlug,
+    sourceKind: params.sourceKind,
+    rawSourceRef: { url: params.episodes[0]?.url },
+  })
 }

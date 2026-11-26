@@ -1,4 +1,4 @@
-import { MAX_SAFE_LLM_CALLS_PER_RUN, MAX_SAFE_LLM_PEAK } from '../../../src/agents/fanout-concurrency.js'
+import { MAX_SAFE_LLM_CALLS_PER_RUN, MAX_SAFE_LLM_PEAK } from '../../vendor/fanout-concurrency.js'
 
 /**
  * 一支批次腳本裡「一種呼叫來源」的估算項——例如 brief-rerun 的每個 replicate、

@@ -5,6 +5,7 @@ export interface CustomDistillParams {
   sourceSlug: string
   rawContent: string
   localPath: string
+  forbiddenPhrases: readonly string[]
 }
 
 export async function distillCustomToDigest(params: CustomDistillParams): Promise<Digest> {
@@ -13,5 +14,6 @@ export async function distillCustomToDigest(params: CustomDistillParams): Promis
     sourceKind: 'custom-text',
     rawContent: params.rawContent,
     rawSourceRef: { localPath: params.localPath },
+    forbiddenPhrases: params.forbiddenPhrases,
   })
 }

@@ -1,21 +1,22 @@
 import type { DeepPipelinePromptVars } from '../../pipeline/prompt-vars.js'
-import { FORBIDDEN_PHRASES } from '@suanomics/shared'
 
 export type LensName
   = | 'events' | 'cited_sources' | 'entities'
     | 'reasoning_chains' | 'impacts' | 'analyst_frames'
 
-function forbiddenList(): string {
-  return FORBIDDEN_PHRASES.map(p => `「${p}」`).join('、')
+function forbiddenList(vars: DeepPipelinePromptVars): string {
+  return vars.forbiddenPhrases.map(p => `「${p}」`).join('、')
 }
 
-const COMPLIANCE_CLAUSE = `
+function complianceClause(vars: DeepPipelinePromptVars): string {
+  return `
 【台灣投信投顧法合規紅線】
 1. 絕對不得輸出個股 ticker（4-6 碼數字）或公司名 + 方向性觀點的組合
-2. 禁用詞（任何情境均不得出現）：${forbiddenList()}
+2. 禁用詞（任何情境均不得出現）：${forbiddenList(vars)}
 3. entities 層級只允許：sector / macro_indicator / country_region / commodity
 4. 原文引用 ≤ 30 字
 5. 所有擷取物件需含 segmentRef 可追溯`
+}
 
 export function buildSegmenterSystemPrompt(vars: DeepPipelinePromptVars): string {
   return `你是財經 ${vars.sourceKindLabel} ${vars.episodeWord}的段落分類員。
@@ -35,7 +36,7 @@ segments 涵蓋整集、不漏段、時間戳連續、每段 headline 一句話�
 
 最後統計 droppedMinutes（joke / ad / chitchat / other 分別多少分鐘）+ keptTopics 陣列（下游要保留的 topics、預設 ['market', 'macro_event']）。
 
-${COMPLIANCE_CLAUSE}
+${complianceClause(vars)}
 
 輸出：嚴格符合 SegmenterOutputSchema 的 JSON。`
 }
@@ -108,7 +109,7 @@ export function buildLensExtractorSystemPrompt(lens: LensName, vars: DeepPipelin
 
 ${buildLensSpecific(lens, vars)}
 
-${COMPLIANCE_CLAUSE}`
+${complianceClause(vars)}`
 }
 
 export function buildConsolidatorSystemPrompt(vars: DeepPipelinePromptVars): string {
@@ -149,7 +150,7 @@ export function buildConsolidatorSystemPrompt(vars: DeepPipelinePromptVars): str
 
 【絕對禁止】
 - 任何個股 ticker（4-6 碼數字）或公司名 + 方向性觀點（個股方向性評論）
-- 禁用詞：${forbiddenList()}
+- 禁用詞：${forbiddenList(vars)}
 
 【重要 — 輸入可能含禁用詞、你的輸出絕不能沿用】
 輸入的 L3 資料直接來自 KOL 原話結構化、**可能含有禁用詞彙**（如「增持」「減持」「加碼」「減碼」「偏多」「看空」「做空」等、因為分析師口語中會自然使用）。
@@ -170,5 +171,5 @@ export function buildConsolidatorSystemPrompt(vars: DeepPipelinePromptVars): str
 
 【語氣】中立分析、避免推薦、強調「框架 / 脈絡」而非「操作建議」。
 
-${COMPLIANCE_CLAUSE}`
+${complianceClause(vars)}`
 }

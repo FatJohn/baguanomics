@@ -1,38 +1,37 @@
-#!/usr/bin/env tsx
-/* eslint-disable no-console -- worker progress logging, structured logger TBD */
-import type { Digest, SourceSpec } from '@suanomics/prompt-research'
+/* eslint-disable no-console -- CLI progress output */
+import type { Digest, SourceSpec } from '../types.js'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import process, { exit } from 'node:process'
+import process from 'node:process'
 import { fileURLToPath } from 'node:url'
-import {
-  DEFAULT_SOURCES,
-  dispatchSource,
-  mergeDigests,
-} from '@suanomics/prompt-research'
-import { Command } from 'commander'
+import { parseArgs } from 'node:util'
+import { getLlmUsage, resolveModel, totalCostUsd } from '../llm.js'
+import { mergeDigests } from '../merger.js'
+import { DEFAULT_SOURCES } from '../sources/default-sources.js'
+import { dispatchSource } from '../sources/index.js'
+import { loadSpecs, unionForbiddenPhrases } from '../spec/load-specs.js'
 import { enforceLlmRunBudget, estimateTotalCalls } from './lib/llm-run-budget.js'
-import { estimatePromptResearchDistill } from './lib/llm-run-estimates.js'
+import { estimatePromptResearchDistill } from './lib/prompt-research-distill-estimate.js'
 
 export interface DistillOpts {
-  kind?: 'yt-transcript' | 'skill-markdown' | 'custom-text' | 'podcast-rss'
+  specs: string
+  url?: string[]
+  playlist?: string
   skill?: string
   file?: string
-  rss?: string
+  kind?: SourceSpec['kind']
+  count?: number
   out: string
   dryRun: boolean
-  mergeOnly: boolean
-  count?: number
-  /** 批次跑前預算閘門的確認旗標，等同其餘批次腳本的 `--yes`。 */
-  yes?: boolean
+  /** 批次跑前預算閘門的確認旗標 */
+  yes: boolean
 }
 
 export function parseSkillAdHoc(arg: string): SourceSpec {
   const [repoRef, pathPart] = arg.split(':')
   const [repoOwner, repoName] = (repoRef ?? '').split('/')
-  if (!repoOwner || !repoName || !pathPart) {
+  if (!repoOwner || !repoName || !pathPart)
     throw new Error('--skill expects "owner/repo:path/to/SKILL.md"')
-  }
   return {
     kind: 'skill-markdown',
     slug: `adhoc-${repoOwner}-${repoName}`,
@@ -42,128 +41,110 @@ export function parseSkillAdHoc(arg: string): SourceSpec {
   }
 }
 
-export function parseRssAdHoc(url: string): SourceSpec {
-  const hostname = new URL(url).hostname.replace(/[^a-z0-9]/gi, '-').toLowerCase()
-  return {
-    kind: 'podcast-rss',
-    slug: `adhoc-podcast-${hostname}`,
-    displayName: hostname,
-    pipeline: 'deep',
-    config: { rssUrl: url, count: 5 },
-  }
-}
-
-/** --skill／--file／--rss／--kind／--count 覆寫全部套用完之後的最終 specs 陣列。 */
+/** --url／--playlist／--skill／--file／--kind／--count 覆寫全部套用完之後的最終 specs。 */
 export function resolveDistillSpecs(opts: DistillOpts): SourceSpec[] {
   let specs: SourceSpec[] = DEFAULT_SOURCES
-  if (opts.skill) {
+  if (opts.url && opts.url.length > 0)
+    specs = [{ kind: 'yt-transcript', slug: 'adhoc-youtube', displayName: 'YouTube', pipeline: 'deep', config: { videoUrls: opts.url } }]
+  else if (opts.playlist)
+    specs = [{ kind: 'yt-transcript', slug: 'adhoc-youtube-streams', displayName: 'YouTube streams', pipeline: 'deep', config: { playlistUrl: opts.playlist } }]
+  else if (opts.skill)
     specs = [parseSkillAdHoc(opts.skill)]
-  }
-  else if (opts.file) {
-    specs = [{
-      kind: 'custom-text',
-      slug: 'custom',
-      displayName: 'custom',
-      pipeline: 'light',
-      config: { filePath: opts.file },
-    }]
-  }
-  else if (opts.rss) {
-    specs = [parseRssAdHoc(opts.rss)]
-  }
+  else if (opts.file)
+    specs = [{ kind: 'custom-text', slug: 'custom', displayName: 'custom', pipeline: 'light', config: { filePath: opts.file } }]
   if (opts.kind)
     specs = specs.filter(s => s.kind === opts.kind)
-  if (typeof opts.count === 'number') {
-    specs = specs.map((s) => {
-      if (s.kind === 'yt-transcript' || s.kind === 'podcast-rss')
-        return { ...s, config: { ...s.config, count: opts.count } }
-      return s
-    })
-  }
+  if (typeof opts.count === 'number')
+    specs = specs.map(s => (s.kind === 'yt-transcript' && s.config.playlistUrl ? { ...s, config: { ...s.config, count: opts.count } } : s))
   return specs
 }
 
-// export 是為了測試能 mock @suanomics/prompt-research 的 dispatchSource／mergeDigests，直接驗證
-// 預算閘門會不會擋下它們（不用真的打 Gemini）；runDistill 不會在 import 當下自動跑，見檔尾
-// isMainModule 的守門（同 brief-rerun.ts 的慣例）。
-export async function runDistill(opts: DistillOpts): Promise<void> {
+export async function runDistill(opts: DistillOpts): Promise<string> {
   const specs = resolveDistillSpecs(opts)
-
+  const forbiddenPhrases = unionForbiddenPhrases(await loadSpecs(resolve(opts.specs)))
   const runId = new Date().toISOString().replace(/[:.]/g, '-')
   const runDir = resolve(opts.out, `${runId}-run`)
+  const estimate = estimatePromptResearchDistill(specs)
 
   if (opts.dryRun) {
-    // dry-run 不落地、不跑 pipeline，只印估算——跟 model-ab.ts 的 --analyze／--probe 同一類，
-    // 不打真 LLM，不受下面的預算閘門管（llm-cli-manifest.ts 對這兩支的既有分類原則）。
     console.log(JSON.stringify({
       runId,
+      model: resolveModel(),
+      forbiddenPhrases: forbiddenPhrases.length,
       specs: specs.map(s => ({ slug: s.slug, kind: s.kind, pipeline: s.pipeline })),
-      estimated_calls: estimateTotalCalls(estimatePromptResearchDistill(specs)),
+      estimated_calls: estimateTotalCalls(estimate),
+      peak: estimate.peak,
     }, null, 2))
-    return
+    return runDir
   }
 
-  // yt-transcript／podcast-rss 的 count 越高、每集 segmenter+lens+STT 的呼叫數
-  // 越容易撞到 500 次／尖峰 10 的專案風險門檻（見 llm-run-estimates.ts）。
-  enforceLlmRunBudget(estimatePromptResearchDistill(specs), {
-    confirmed: opts.yes === true,
+  enforceLlmRunBudget(estimate, {
+    confirmed: opts.yes,
     errLog: line => console.error(line),
-    // ★ 刻意用 process.exit（不是檔頭 import 的 exit）：後者在模組載入當下就把函式參照
-    // 綁死，測試裡 vi.spyOn(process, 'exit') 換掉 process.exit 這個 property 對它沒有作用
-    // （同 news-backfill-tags.ts 的教訓）。
-    exit: process.exit,
-    // 這支腳本沒有 --limit／--dates／--replicates，縮小範圍的正確做法是調小 --count。
-    narrowingHint: '--count 縮小 yt-transcript／podcast-rss 的集數',
+    exit: code => process.exit(code),
+    narrowingHint: '--count 或少給幾個 --url',
   })
 
   mkdirSync(join(runDir, 'per-source'), { recursive: true })
-
   const digests: Digest[] = []
-  for (const spec of specs) {
-    console.warn(`[run] ${spec.slug} (${spec.kind})`)
-    const digest = await dispatchSource(spec, runDir)
-    digests.push(digest)
-    writeFileSync(
-      join(runDir, 'per-source', `${spec.slug}.json`),
-      JSON.stringify(digest, null, 2),
-      'utf8',
-    )
+  try {
+    for (const spec of specs) {
+      console.warn(`[run] ${spec.slug} (${spec.kind})`)
+      const digest = await dispatchSource(spec, runDir, { forbiddenPhrases })
+      digests.push(digest)
+      writeFileSync(join(runDir, 'per-source', `${spec.slug}.json`), JSON.stringify(digest, null, 2), 'utf8')
+    }
+    const { markdown, draft } = mergeDigests(digests, { sources: specs })
+    writeFileSync(join(runDir, 'merged-analyzer-prompt-draft.md'), markdown, 'utf8')
+    writeFileSync(join(runDir, 'merged-analyzer-prompt-draft.json'), JSON.stringify(draft, null, 2), 'utf8')
   }
-
-  const { markdown, draft } = mergeDigests(digests, { sources: specs })
-  const mdPath = join(runDir, 'merged-analyzer-prompt-draft.md')
-  const jsonPath = join(runDir, 'merged-analyzer-prompt-draft.json')
-  writeFileSync(mdPath, markdown, 'utf8')
-  writeFileSync(jsonPath, JSON.stringify(draft, null, 2), 'utf8')
-  console.log(mdPath)
-  console.log(jsonPath)
+  finally {
+    // 失敗也要留下已花的錢，事後才對得上帳。
+    writeFileSync(join(runDir, 'llm-usage.json'), JSON.stringify({ totalCostUsd: totalCostUsd(), calls: getLlmUsage() }, null, 2), 'utf8')
+    console.error(`[llm] ${getLlmUsage().length} 次呼叫，US$${totalCostUsd().toFixed(4)}`)
+  }
+  console.log(runDir)
+  return runDir
 }
 
-const program = new Command()
-program
-  .name('prompt-research-distill')
-  .description('Distill source materials into a merged analyzer prompt draft')
-  .option('-k, --kind <kind>', 'yt-transcript | skill-markdown | custom-text | podcast-rss')
-  .option('-s, --skill <arg>', '"owner/repo:path/to/SKILL.md"')
-  .option('-f, --file <path>', 'custom-text file path')
-  .option('-r, --rss <url>', 'podcast RSS feed URL (ad-hoc)')
-  .option('-o, --out <dir>', 'output directory (relative to apps/server/ CWD)', '.prompt-research-out')
-  .option('--dry-run', 'print plan only')
-  .option('--merge-only', '(reserved) merge existing digests')
-  .option('--count <n>', 'count override (yt-transcript / podcast-rss)', (v: string) => Number.parseInt(v, 10))
-  .option('--yes', 'skip the pre-run LLM budget confirmation (see tools/cli/lib/llm-run-budget.ts)')
-  .action((opts: DistillOpts) => runDistill(opts).then(() => exit(0)).catch((err: Error) => {
-    console.error(err.stack ?? err.message)
-    exit(1)
-  }))
+function parseCli(argv: string[]): DistillOpts {
+  const { values } = parseArgs({
+    args: argv,
+    options: {
+      'specs': { type: 'string' },
+      'url': { type: 'string', multiple: true },
+      'playlist': { type: 'string' },
+      'skill': { type: 'string' },
+      'file': { type: 'string' },
+      'kind': { type: 'string' },
+      'count': { type: 'string' },
+      'out': { type: 'string', default: 'out' },
+      'dry-run': { type: 'boolean', default: false },
+      'yes': { type: 'boolean', default: false },
+    },
+  })
+  if (!values.specs)
+    throw new Error('需要 --specs <suanomics/docs/prompt-specs 目錄>：禁用語從規格檔讀')
+  if (values.kind !== undefined && !['yt-transcript', 'skill-markdown', 'custom-text'].includes(values.kind))
+    throw new Error(`--kind 不認得：${values.kind}`)
+  return {
+    specs: values.specs,
+    out: values.out,
+    dryRun: values['dry-run'],
+    yes: values.yes,
+    ...(values.url ? { url: values.url } : {}),
+    ...(values.playlist ? { playlist: values.playlist } : {}),
+    ...(values.skill ? { skill: values.skill } : {}),
+    ...(values.file ? { file: values.file } : {}),
+    ...(values.kind ? { kind: values.kind as SourceSpec['kind'] } : {}),
+    ...(values.count ? { count: Number.parseInt(values.count, 10) } : {}),
+  }
+}
 
-// 只在「這支檔案被直接執行」時才跑 CLI parse（同 brief-rerun.ts 的慣例）——否則測試 import
-// runDistill／resolveDistillSpecs 這些函式時，會在 import 當下就跑進 commander.parseAsync。
-const isMainModule = process.argv[1] !== undefined && process.argv[1] === fileURLToPath(import.meta.url)
-
-if (isMainModule) {
-  program.parseAsync(process.argv).catch((err: Error) => {
+// 只在直接執行時跑，測試 import 時不觸發。
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  runDistill(parseCli(process.argv.slice(2))).catch((err: Error) => {
     console.error(err.stack ?? err.message)
-    exit(1)
+    process.exit(1)
   })
 }

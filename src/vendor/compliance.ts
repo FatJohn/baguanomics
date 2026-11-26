@@ -1,136 +1,22 @@
-// Taiwan 投信投顧法 + 金融消費者保護法 合規 helpers
-// Single source of truth for Cascade / prompt-research。
-// 下游 forbidden-filter / prompt builder / tool compliance scan 共用、避免規則漂移。
-
-// ===== 禁用詞陣列 =====
-export const FORBIDDEN_PHRASES: readonly string[] = Object.freeze([
-  '建議買',
-  '建議賣',
-  '建議加碼',
-  '建議減碼',
-  '建議持有',
-  '穩賺不賠',
-  '保證獲利',
-  '一定會漲',
-  '一定會跌',
-  // 拆成 price-prediction 專用句式、避免誤判「我一定會回覆你」這類日常語
-  '一定會回升',
-  '一定會回檔',
-  '一定會回到',
-  '建議攤平',
-  '建議停損',
-  '建議進場',
-  '建議出場',
-  // 軟推薦 / 方向性字眼（YT KOL 常用）
-  '可以考慮',
-  '值得考慮',
-  '值得關注',
-  '值得留意',
-  '值得追蹤',
-  '建議觀察',
-  '建議留意',
-  '避開',
-  '少碰',
-  '繞開',
-  '佈局',
-  '可以進場',
-  '可以出場',
-  '進場時機',
-  '出場時機',
-  '進場點',
-  '出場點',
-  '加碼時機',
-  '減碼時機',
-  '看多',
-  '看空',
-  '偏多',
-  '偏空',
-  '轉多',
-  '轉空',
-  '做多',
-  '做空',
-  '增持',
-  '減持',
-])
-
-// 最長禁用詞 - 1 即為 sliding window tail 長度：確保跨 chunk 拼接後
-// 仍可偵測到分割在邊界的敏感字（chunk1="建" + chunk2="議買"）
-const MAX_PHRASE_LEN = Math.max(...FORBIDDEN_PHRASES.map(p => p.length))
-const WINDOW = Math.max(0, MAX_PHRASE_LEN - 1)
+// 台灣投信投顧法合規 helper，搬自 suanomics packages/shared/src/compliance.ts。
+// 禁用詞清單不在這裡：它是 suanomics 目標 prompt 規格檔的內容，由呼叫端傳入（ADR 0008）。
 
 export interface ForbiddenMatch {
   hit: boolean
   phrase?: string
 }
 
-export function containsForbiddenPhrase(text: string): ForbiddenMatch {
-  for (const phrase of FORBIDDEN_PHRASES) {
+export function containsForbiddenPhrase(text: string, phrases: readonly string[]): ForbiddenMatch {
+  for (const phrase of phrases) {
     if (text.includes(phrase))
       return { hit: true, phrase }
   }
   return { hit: false }
 }
 
-export interface FilterPushResult {
-  hit: boolean
-  safe: string
-  phrase?: string
-}
-
-export interface StreamingFilter {
-  push: (chunk: string) => FilterPushResult
-  flush: () => string
-}
-
-export function createStreamingFilter(): StreamingFilter {
-  let buffer = ''
-  let hitPhrase: string | undefined
-  let stopped = false
-
-  return {
-    push(chunk: string): FilterPushResult {
-      if (stopped) {
-        return hitPhrase !== undefined
-          ? { hit: true, safe: '', phrase: hitPhrase }
-          : { hit: true, safe: '' }
-      }
-      if (chunk.length === 0)
-        return { hit: false, safe: '' }
-
-      const combined = buffer + chunk
-      const match = containsForbiddenPhrase(combined)
-      if (match.hit) {
-        stopped = true
-        hitPhrase = match.phrase
-        buffer = ''
-        return match.phrase !== undefined
-          ? { hit: true, safe: '', phrase: match.phrase }
-          : { hit: true, safe: '' }
-      }
-
-      // 保留 tail (WINDOW chars)、其餘當安全內容輸出
-      if (combined.length <= WINDOW) {
-        buffer = combined
-        return { hit: false, safe: '' }
-      }
-      const emitLen = combined.length - WINDOW
-      const safe = combined.slice(0, emitLen)
-      buffer = combined.slice(emitLen)
-      return { hit: false, safe }
-    },
-    flush(): string {
-      if (stopped)
-        return ''
-      const out = buffer
-      buffer = ''
-      return out
-    },
-  }
-}
-
 // ===== Ticker / 公司名 + 方向性動詞 組合偵測 =====
 
-export const TW_STOCK_NAMES = Object.freeze([
+const TW_STOCK_NAMES = Object.freeze([
   '台積電',
   '鴻海',
   '聯發科',
@@ -162,7 +48,7 @@ export const TW_STOCK_NAMES = Object.freeze([
   '英業達',
 ] as const)
 
-export const DIRECTION_VERBS = Object.freeze([
+const DIRECTION_VERBS = Object.freeze([
   '看多',
   '看空',
   '偏多',
@@ -180,7 +66,7 @@ export const DIRECTION_VERBS = Object.freeze([
 // 第三方市場主體：方向詞若被這些主體歸因（前方短窗內）→ 事實陳述、非個人化指示
 // 注意：只放「他方機構主體」。不可加「散戶/投資人」這種＝讀者本身的詞——
 // 那會讓「建議散戶加碼台積電」這類對讀者的個人化指示漏接（且會切斷 建議加碼 連續詞偵測）。
-export const ACTOR_SUBJECTS = Object.freeze([
+const ACTOR_SUBJECTS = Object.freeze([
   '外資',
   '法人',
   '投信',
@@ -280,23 +166,4 @@ export function containsTickerDirection(text: string): TickerDirectionMatch {
     }
   }
   return { hit: false }
-}
-
-// ===== Unified L3 compliance gate =====
-
-export interface ComplianceViolation {
-  violation: 'forbidden' | 'ticker-direction'
-  matched: string
-}
-
-export function checkCompliance(text: string): ComplianceViolation | null {
-  const f = containsForbiddenPhrase(text)
-  if (f.hit)
-    return { violation: 'forbidden', matched: f.phrase ?? '' }
-  const t = containsTickerDirection(text)
-  if (t.hit) {
-    const matched = t.snippet ?? `${t.ticker ?? t.company ?? ''} ${t.verb ?? ''}`.trim()
-    return { violation: 'ticker-direction', matched }
-  }
-  return null
 }

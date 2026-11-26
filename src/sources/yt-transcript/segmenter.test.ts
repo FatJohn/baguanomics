@@ -1,26 +1,19 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import process from 'node:process'
-import { GoogleGenAI } from '@google/genai'
-
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { YT_PROMPT_VARS } from '../../pipeline/prompt-vars.js'
+
+import { TEST_YT_VARS } from '../../__fixtures__/forbidden-phrases.js'
+import { callStructured, LlmOutputError } from '../../llm.js'
 import { createLogger } from './logger.js'
 import { runSegmenter } from './segmenter.js'
 
-vi.mock('@google/genai', () => ({
-  GoogleGenAI: vi.fn().mockImplementation(() => ({
-    models: { generateContent: vi.fn() },
-  })),
-  Type: {
-    OBJECT: 'OBJECT',
-    STRING: 'STRING',
-    ARRAY: 'ARRAY',
-    NUMBER: 'NUMBER',
-    INTEGER: 'INTEGER',
-  },
+vi.mock('../../llm.js', async importOriginal => ({
+  ...(await importOriginal<typeof import('../../llm.js')>()),
+  callStructured: vi.fn(),
 }))
+
+const mockCall = vi.mocked(callStructured)
 
 const VALID_OUTPUT = {
   episodeId: 'ep1',
@@ -33,48 +26,50 @@ const VALID_OUTPUT = {
   droppedMinutes: { joke: 30, ad: 0, chitchat: 0, other: 0 },
 }
 
-function mockClientWith(...responses: Array<{ text: string }>) {
-  const gc = vi.fn()
-  for (const r of responses) gc.mockResolvedValueOnce(r)
-  const client = { models: { generateContent: gc } }
-  vi.mocked(GoogleGenAI).mockImplementation(() => client as unknown as InstanceType<typeof GoogleGenAI>)
-  return { client, gc }
+function mockReturns(...responses: unknown[]) {
+  for (const r of responses) mockCall.mockResolvedValueOnce(r)
 }
 
 describe('runSegmenter', () => {
   let dir: string
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'seg-'))
-    vi.clearAllMocks()
-    process.env.GEMINI_API_KEY = 'fake-key'
+    mockCall.mockReset()
   })
   afterEach(() => rmSync(dir, { recursive: true, force: true }))
 
-  it('shouldReturnValidatedOutputWhenGeminiRespondsValidJson', async () => {
-    mockClientWith({ text: JSON.stringify(VALID_OUTPUT) })
+  it('returns the validated output and tags the call as the segmenter stage', async () => {
+    mockReturns(VALID_OUTPUT)
     const logger = createLogger({ runId: 'r1', runDir: dir })
-    const result = await runSegmenter('fake transcript', 'ep1', logger, YT_PROMPT_VARS)
+    const result = await runSegmenter('fake transcript', 'ep1', logger, TEST_YT_VARS)
     expect(result.episodeId).toBe('ep1')
     expect(result.segments).toHaveLength(2)
+    expect(mockCall.mock.calls[0]?.[0]).toMatchObject({ stage: 'segmenter', user: 'episodeId: ep1\n\n---\n\nfake transcript' })
     logger.close()
   })
 
   it('shouldRetryOnceWhenFirstResponseIsInvalidSchema', async () => {
-    const { gc } = mockClientWith(
-      { text: '{"invalid": true}' },
-      { text: JSON.stringify(VALID_OUTPUT) },
-    )
+    mockReturns({ invalid: true }, VALID_OUTPUT)
     const logger = createLogger({ runId: 'r2', runDir: dir })
-    const result = await runSegmenter('t', 'ep1', logger, YT_PROMPT_VARS)
-    expect(gc).toHaveBeenCalledTimes(2)
+    const result = await runSegmenter('t', 'ep1', logger, TEST_YT_VARS)
+    expect(mockCall).toHaveBeenCalledTimes(2)
     expect(result.episodeId).toBe('ep1')
     logger.close()
   })
 
-  it('shouldThrowAfterTwoRetriesAllFail', async () => {
-    mockClientWith({ text: 'not json' }, { text: 'still not json' })
+  it('retries LlmOutputError and throws after SEGMENTER_MAX_ATTEMPTS', async () => {
+    mockCall.mockRejectedValue(new LlmOutputError('segmenter', new Error('bad')))
     const logger = createLogger({ runId: 'r3', runDir: dir })
-    await expect(runSegmenter('t', 'ep1', logger, YT_PROMPT_VARS)).rejects.toThrow()
+    await expect(runSegmenter('t', 'ep1', logger, TEST_YT_VARS)).rejects.toBeInstanceOf(LlmOutputError)
+    expect(mockCall).toHaveBeenCalledTimes(2)
+    logger.close()
+  })
+
+  it('does not retry non-output errors such as network failures', async () => {
+    mockCall.mockRejectedValue(new Error('ECONNRESET'))
+    const logger = createLogger({ runId: 'r4', runDir: dir })
+    await expect(runSegmenter('t', 'ep1', logger, TEST_YT_VARS)).rejects.toThrow('ECONNRESET')
+    expect(mockCall).toHaveBeenCalledTimes(1)
     logger.close()
   })
 })
