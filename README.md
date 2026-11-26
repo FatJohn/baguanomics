@@ -1,71 +1,70 @@
-# @suanomics/prompt-research — Prompt research pipeline
+# baguanomics
 
-Prompt 蒸餾 / 編譯 pipeline runtime。從 YouTube transcript / skill markdown / custom text 等 source 拉素材、LLM 蒸餾成 digest、合併、編譯成各 agent 的 candidate prompt（frames / vocab / redFlags 全量直通）、寫入 `packages/prompts/_candidates/<runId>/`。frame-level 取捨由人在 promote 時做（diff candidate vs production prompt、手動貼上）。
+讀者：維護 suanomics prompt 的開發者
+型別：入口
 
-2026-05-20 從 `apps/server/src/lib/prompt-research/` 抽出為獨立 workspace、可獨立演進。全圖見 [模組地圖](../../docs/architecture/module-map.md)。
+baguanomics 把財經素材蒸餾成分析框架，再依 suanomics 的目標 prompt 規格檔產出候選 prompt 與 diff。素材來源與蒸餾產物見下方表格。它只寫自己的輸出目錄，不改 suanomics 的任何檔案；要不要把候選內容併進 suanomics，由人看 diff 決定。
 
-## 目錄
+## 快速開始
 
-```
-src/
-├── index.ts                  # 主 subpath：pipeline runtime 公開 surface
-├── types.ts                  # SourceSpec / Digest 等
-├── gemini-client.ts          # Gemini SDK 包裝（與 server 那份是分開的）
-├── merger.ts                 # digest 合併
-├── compiler/                 # candidate prompt 編譯
-│   ├── compiler.ts           # 主入口（runCompile）
-│   ├── cli-compile.ts        # CLI 進入點
-│   ├── prune-candidates.ts   # 舊 candidate 清除
-│   ├── analyst-prompt.ts
-│   ├── decomposer-prompt.ts
-│   └── shared-preamble.ts
-├── distillers/               # 各 source → digest 的蒸餾器
-├── sources/                  # source 實作
-│   ├── index.ts
-│   ├── dispatch.ts           # dispatchSource()：根據 kind 派工
-│   ├── default-sources.ts    # DEFAULT_SOURCES 清單
-│   ├── custom-text.ts
-│   ├── skill-markdown.ts
-│   └── yt-transcript/        # YouTube 字幕 source（多檔模組）
-└── __fixtures__/             # 測試 fixtures
-```
+1. 安裝依賴：`pnpm install --frozen-lockfile`（Node 26、pnpm 版本見 `package.json` 的 `packageManager`）。
+2. 複製 `.env.example` 為 `.env`，填入 `ANTHROPIC_API_KEY`。
+3. 先看估算不花錢：`pnpm distill --specs <suanomics>/docs/prompt-specs --url <YouTube 影片網址> --dry-run`。
+4. 真跑蒸餾：拿掉 `--dry-run`，完成後最後一行印出 run 目錄。
+5. 編譯候選：`pnpm compile --run <run 目錄> --specs <suanomics>/docs/prompt-specs`。
 
-## Entry & exports
+## 輸入：目標 prompt 規格檔
 
-單一 subpath：
+規格檔是 suanomics 的 `docs/prompt-specs/<agent>.md`，由 suanomics 的測試從程式常數產生。baguanomics 從中讀四樣東西，格式不符就丟錯：
 
-| Subpath | 用途 |
-|---------|------|
-| `.` | runtime：`runCompile` / `pruneOldCandidates` / `mergeDigests` / `DEFAULT_SOURCES` / `dispatchSource` / `Digest` / `SourceSpec` |
+| 內容 | 用途 |
+|---|---|
+| `- agent:`、`- frame-style:` | 決定研究素材怎麼排；`none` 的 agent 不產候選 |
+| `## 現行 prompt` 下每個 prompt 全文 | 候選 prompt 的起點，diff 的基準 |
+| `### 禁用語` | distill 的合規清單，也用來濾掉帶禁用語的框架與術語 |
+| `### 抽象評價贅詞` | 有的話加一行禁止固定贅尾，且不把這些詞當術語推薦 |
 
-## 常用命令
+## distill 的來源參數
+
+| 參數 | 來源 |
+|---|---|
+| `--url <網址>`（可重複） | 指定的 YouTube 影片 |
+| `--playlist <直播頁網址>` | 頻道直播頁的前 `--count` 集，預設 5 集 |
+| `--skill owner/repo:path` | GitHub 上的 skill markdown |
+| `--file <路徑>` | 本機文字檔 |
+| 都不給 | `src/sources/default-sources.ts` 的三個 skill markdown |
+
+YouTube 來源走 segmenter、6 個 lens、consolidator、distill 四段；skill 與文字檔只走 distill。
+
+## 花費控制
+
+- 開跑前估算最壞呼叫數與尖峰並行，超過 500 次或尖峰超過 10 時要加 `--yes` 才跑。
+- 每次 LLM 呼叫記帳，累計達 `BAGUANOMICS_MAX_USD`（預設 1 美元）就在下一次呼叫前停下。
+- run 目錄的 `llm-usage.json` 記每次呼叫的 stage、token 與花費，失敗的 run 也會寫。
+- 模型預設 `claude-haiku-5-5`，可用 `BAGUANOMICS_MODEL` 改成 `claude-sonnet-5-5`。
+
+## 輸出
+
+| 路徑（相對 run 目錄） | 內容 |
+|---|---|
+| `per-source/<slug>.json` | 每個來源的 digest |
+| `<slug>-consolidated.md` | YouTube 來源的跨集彙整 |
+| `merged-analyzer-prompt-draft.{md,json}` | 合併後的框架、用詞與紅線 |
+| `compiled/candidates/<agent>.<PROMPT>.txt` | 候選 prompt：現行全文加「研究素材補充」段 |
+| `compiled/diffs/<agent>.<PROMPT>.diff` | 候選對現行 prompt 的 unified diff |
+| `compiled/summary.json` | 跳過的 agent、每份候選的新增行數與被濾掉的框架數 |
+
+## 開發
 
 ```bash
-pnpm --filter @suanomics/prompt-research build
-pnpm --filter @suanomics/prompt-research test
-pnpm --filter @suanomics/prompt-research type-check
+pnpm test        # vitest
+pnpm lint        # ESLint
+pnpm type-check  # tsc
+pnpm knip        # 未使用的檔案、export 與依賴
 ```
 
-> CLI 進入點在 server：`pnpm --filter server prompt:distill` / `prompt:compile` / `prompt:refresh`（後者走 queue）。
-> compile 產 candidate 後人工 promote（無自動 curate 階段）。
+改 `src/sources/yt-transcript/prompts.ts` 後跑 `pnpm exec tsx scripts/regen-prompts-baseline.ts`，fixture 的 diff 與 prompt 改動放同一個 commit。
 
-## 依賴
+## 授權
 
-| 來源 | 用途 |
-|------|------|
-| `@suanomics/jobs` | `SourceSpec` 型別來源 |
-| `@suanomics/shared` | compliance / brief 契約 |
-| `@google/genai` | Gemini SDK |
-| `fastest-levenshtein` | digest dedup |
-| `youtube-transcript-plus` | YouTube transcript source |
-
-## 被誰用
-
-只給 `apps/server` 用（runtime 經 `prompt-refresh-worker` + `runPromptRefresh`、CLI 經 `scripts/prompt-research-*.ts`）。**`apps/web` 不依**。
-
-## 約束
-
-- 禁依 `apps/*`。
-- public-API surface 透過 `package.json` 的 `exports` field 與 [knip.json](../../knip.json) entry 宣告、其他 export 用 internal 處理（移 `export` keyword）。
-- candidate 寫到 `packages/prompts/_candidates/<runId>/`、不直接覆蓋 production prompt（人工 review + 拷貝進 `apps/server/src/prompts/<name>.prompt.ts`）。
-- runtime dependencies 改動要審慎：server 已從 `package.json` 把 `fastest-levenshtein` / `youtube-transcript-plus` 移到這裡、不要又 leak 回去。
+Apache-2.0，見 `LICENSE`。
