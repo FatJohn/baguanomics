@@ -36,6 +36,15 @@ export const SegmenterOutputSchema = z.object({
 })
 export type SegmenterOutput = z.infer<typeof SegmenterOutputSchema>
 
+export const LENS_ITEM_LIMITS = {
+  events: 15,
+  cited_sources: 20,
+  entities: 20,
+  reasoning_chains: 10,
+  impacts: 12,
+  analyst_frames: 8,
+} as const
+
 // ===== Lens: Events =====
 
 export const EventSchema = z.object({
@@ -51,7 +60,7 @@ export type Event = z.infer<typeof EventSchema>
 
 export const EventsLensSchema = z.object({
   episodeId: z.string(),
-  events: z.array(EventSchema).max(15),
+  events: z.array(EventSchema).max(LENS_ITEM_LIMITS.events),
 })
 export type EventsLens = z.infer<typeof EventsLensSchema>
 
@@ -66,7 +75,7 @@ export type CitedSource = z.infer<typeof CitedSourceSchema>
 
 export const CitedSourcesLensSchema = z.object({
   episodeId: z.string(),
-  sources: z.array(CitedSourceSchema).max(20),
+  sources: z.array(CitedSourceSchema).max(LENS_ITEM_LIMITS.cited_sources),
 })
 export type CitedSourcesLens = z.infer<typeof CitedSourcesLensSchema>
 
@@ -82,7 +91,7 @@ export type Entity = z.infer<typeof EntitySchema>
 
 export const EntitiesLensSchema = z.object({
   episodeId: z.string(),
-  entities: z.array(EntitySchema).max(20),
+  entities: z.array(EntitySchema).max(LENS_ITEM_LIMITS.entities),
 })
 export type EntitiesLens = z.infer<typeof EntitiesLensSchema>
 
@@ -98,7 +107,7 @@ export type ReasoningChain = z.infer<typeof ReasoningChainSchema>
 
 export const ReasoningChainsLensSchema = z.object({
   episodeId: z.string(),
-  chains: z.array(ReasoningChainSchema).max(10),
+  chains: z.array(ReasoningChainSchema).max(LENS_ITEM_LIMITS.reasoning_chains),
 })
 export type ReasoningChainsLens = z.infer<typeof ReasoningChainsLensSchema>
 
@@ -114,7 +123,7 @@ export type Impact = z.infer<typeof ImpactSchema>
 
 export const ImpactsLensSchema = z.object({
   episodeId: z.string(),
-  impacts: z.array(ImpactSchema).max(12),
+  impacts: z.array(ImpactSchema).max(LENS_ITEM_LIMITS.impacts),
 })
 export type ImpactsLens = z.infer<typeof ImpactsLensSchema>
 
@@ -130,7 +139,7 @@ export type AnalystFrame = z.infer<typeof AnalystFrameSchema>
 
 export const AnalystFramesLensSchema = z.object({
   episodeId: z.string(),
-  frames: z.array(AnalystFrameSchema).max(8),
+  frames: z.array(AnalystFrameSchema).max(LENS_ITEM_LIMITS.analyst_frames),
 })
 export type AnalystFramesLens = z.infer<typeof AnalystFramesLensSchema>
 
