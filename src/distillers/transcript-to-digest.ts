@@ -5,8 +5,8 @@ import { distillToDigest } from './build-digest.js'
 
 /**
  * Builds the system prompt that asks the LLM to extract a Digest JSON from the
- * consolidated md. yt-transcript 與 podcast-rss 共用、source-specific 字眼透過
- * `vars` 注入。yt 帶 `YT_PROMPT_VARS` 時與重構前 byte-for-byte 一致。
+ * consolidated md. source-specific 字眼透過 `vars` 注入。yt 帶 `YT_PROMPT_VARS`
+ * 時與重構前 byte-for-byte 一致。
  *
  * 來源標籤從 `digestTitlePrefix` 第一個 token 取出（yt='YT' / podcast='Podcast'）、
  * 與 consolidator 輸出的 markdown title 同步、保持 LLM 看到的字眼一致。

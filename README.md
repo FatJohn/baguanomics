@@ -39,7 +39,8 @@ YouTube 來源走 segmenter、6 個 lens、consolidator、distill 四段；skill
 ## 花費控制
 
 - 開跑前估算最壞呼叫數與尖峰並行，超過 500 次或尖峰超過 10 時要加 `--yes` 才跑。
-- 每次 LLM 呼叫記帳，累計達 `BAGUANOMICS_MAX_USD`（預設 1 美元）就在下一次呼叫前停下。
+- 每次 LLM 呼叫記帳，累計達 `BAGUANOMICS_MAX_USD`（預設 1 美元）就在下一次呼叫前停下。檢查發生在送出前，已在並行中的呼叫（最多 9 個）仍會完成並計入，總額可能超過上限。
+- Haiku 單次輸入超過 100K token 時，帳本以 5 倍單價記，寧可高估。
 - run 目錄的 `llm-usage.json` 記每次呼叫的 stage、token 與花費，失敗的 run 也會寫。
 - 模型預設 `claude-haiku-5-5`，可用 `BAGUANOMICS_MODEL` 改成 `claude-sonnet-5-5`。
 
