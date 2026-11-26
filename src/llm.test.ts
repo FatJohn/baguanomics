@@ -1,4 +1,4 @@
-import { NoObjectGeneratedError } from 'ai'
+import { NoObjectGeneratedError, NoOutputGeneratedError } from 'ai'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { callStructured, computeCostUsd, getLlmUsage, LlmOutputError, resetLlmUsage, resolveModel, totalCostUsd } from './llm.js'
@@ -26,16 +26,17 @@ describe('resolveModel', () => {
 
 describe('computeCostUsd', () => {
   it('依每百萬 token 單價計算', () => {
-    expect(computeCostUsd('claude-haiku-5-5', { inputTokens: 1_000_000, outputTokens: 1_000_000 })).toBeCloseTo(0.6)
+    expect(computeCostUsd('claude-haiku-5-5', { inputTokens: 100_000, outputTokens: 1_000_000 })).toBeCloseTo(0.51)
+    expect(computeCostUsd('claude-sonnet-5-5', { inputTokens: 1_000_000, outputTokens: 1_000_000 })).toBeCloseTo(12)
   })
 
   it('cache 讀寫依倍率計價', () => {
-    const cost = computeCostUsd('claude-haiku-5-5', {
+    const cost = computeCostUsd('claude-sonnet-5-5', {
       inputTokens: 3_000_000,
       outputTokens: 0,
       inputTokenDetails: { noCacheTokens: 1_000_000, cacheReadTokens: 1_000_000, cacheWriteTokens: 1_000_000 },
     })
-    expect(cost).toBeCloseTo(0.1 + 0.01 + 0.125)
+    expect(cost).toBeCloseTo(2 + 0.2 + 2.5)
   })
 })
 
@@ -63,6 +64,24 @@ describe('callStructured', () => {
     }))
     await expect(callStructured(params)).rejects.toBeInstanceOf(LlmOutputError)
     expect(getLlmUsage()).toHaveLength(1)
+  })
+
+  it('模型沒回任何文字（NoOutputGeneratedError）也轉成 LlmOutputError，usage 照記', async () => {
+    generateTextMock.mockResolvedValue({
+      usage: { inputTokens: 1000, outputTokens: 16000 },
+      get output(): never {
+        throw new NoOutputGeneratedError({ message: 'No output generated.' })
+      },
+    })
+    await expect(callStructured(params)).rejects.toBeInstanceOf(LlmOutputError)
+    expect(getLlmUsage()).toHaveLength(1)
+  })
+
+  it('haiku 輸入超過 100K token 時改用 5 倍單價估算', () => {
+    const small = computeCostUsd('claude-haiku-5-5', { inputTokens: 100_000, outputTokens: 1000 })
+    const big = computeCostUsd('claude-haiku-5-5', { inputTokens: 100_001, outputTokens: 1000 })
+    expect(small).toBeCloseTo((100_000 * 0.1 + 1000 * 0.5) / 1e6)
+    expect(big).toBeCloseTo((100_001 * 0.5 + 1000 * 2.5) / 1e6)
   })
 
   it('其他錯誤原樣拋出、不轉成可重試錯誤', async () => {

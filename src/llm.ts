@@ -1,7 +1,7 @@
 import type { z } from 'zod'
 import process from 'node:process'
 import { anthropic } from '@ai-sdk/anthropic'
-import { generateText, NoObjectGeneratedError, Output } from 'ai'
+import { generateText, NoObjectGeneratedError, NoOutputGeneratedError, Output } from 'ai'
 
 /**
  * 本工具唯一的 LLM 呼叫入口：AI SDK 的 generateText 加 Output.object。
@@ -15,12 +15,19 @@ const DEFAULT_MAX_OUTPUT_TOKENS = 16_000
 /** 網路錯誤與 429 由 AI SDK 自己重試的次數；預算估算用它算 HTTP 最壞值。 */
 export const LLM_SDK_MAX_RETRIES = 2
 
-interface ModelPrice { input: number, output: number } // USD per 1M tokens
+interface ModelPrice {
+  input: number // USD per 1M tokens
+  output: number
+  /** 輸入超過這個 token 數時整筆改用 longContextMultiplier 倍的單價。 */
+  longContextThreshold?: number
+  longContextMultiplier?: number
+}
 
 // 價格取自 suanomics apps/pipeline/src/agents/pricing.ts（PRICE_VERSION 2026-10-06）。
-// Haiku 5.5 的 prompt 超過 100K token 時單價變 5 倍，表上只記 100K 以內的價。
+// 那份註解寫 Haiku 5.5 的 prompt 超過 100K token 時單價變 5 倍；本工具餵整集逐字稿，
+// 會碰到這個長度，花費上限要照高價估，輸入與輸出都乘上倍率，寧可高估。
 const MODEL_PRICING: Record<string, ModelPrice> = {
-  'claude-haiku-5-5': { input: 0.10, output: 0.50 },
+  'claude-haiku-5-5': { input: 0.10, output: 0.50, longContextThreshold: 100_000, longContextMultiplier: 5 },
   'claude-sonnet-5-5': { input: 2.00, output: 10.00 },
 }
 const CACHE_RATES = { write: 1.25, read: 0.1 }
@@ -83,7 +90,11 @@ export function computeCostUsd(model: string, usage: SdkUsage): number {
   const cacheWrite = usage.inputTokenDetails?.cacheWriteTokens ?? 0
   const noCache = usage.inputTokenDetails?.noCacheTokens ?? (usage.inputTokens ?? 0) - cacheRead - cacheWrite
   const inputUnits = noCache + cacheWrite * CACHE_RATES.write + cacheRead * CACHE_RATES.read
-  return (inputUnits * price.input + (usage.outputTokens ?? 0) * price.output) / 1_000_000
+  const totalInput = usage.inputTokens ?? noCache + cacheRead + cacheWrite
+  const multiplier = price.longContextThreshold !== undefined && totalInput > price.longContextThreshold
+    ? price.longContextMultiplier ?? 1
+    : 1
+  return multiplier * (inputUnits * price.input + (usage.outputTokens ?? 0) * price.output) / 1_000_000
 }
 
 function record(stage: string, model: string, usage: SdkUsage): void {
@@ -134,6 +145,9 @@ export async function callStructured<T>(p: CallStructuredParams<T>): Promise<T> 
     return result.output
   }
   catch (err) {
+    // 模型完全沒回文字（例如 thinking 用光 maxOutputTokens）時讀 output 會丟這個；usage 已記。
+    if (NoOutputGeneratedError.isInstance(err))
+      throw new LlmOutputError(p.stage, err)
     if (NoObjectGeneratedError.isInstance(err)) {
       if (err.usage)
         record(p.stage, model, err.usage)
