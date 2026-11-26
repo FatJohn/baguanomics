@@ -11,7 +11,7 @@ const { values } = parseArgs({
 })
 
 if (!values.run || !values.specs) {
-  console.error('用法：pnpm compile --run <distill 的 run 目錄> --specs <suanomics/docs/prompt-specs>')
+  console.error('用法：pnpm compile --run <distill 的 run 目錄> --specs <suanomics/docs/prompt-specs/agents>')
   process.exit(2)
 }
 

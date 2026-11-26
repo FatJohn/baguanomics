@@ -9,13 +9,13 @@ baguanomics 把財經素材蒸餾成分析框架，再依 suanomics 的目標 pr
 
 1. 安裝依賴：`pnpm install --frozen-lockfile`（Node 26、pnpm 版本見 `package.json` 的 `packageManager`）。
 2. 複製 `.env.example` 為 `.env`，填入 `ANTHROPIC_API_KEY`。
-3. 先看估算不花錢：`pnpm distill --specs <suanomics>/docs/prompt-specs --url <YouTube 影片網址> --dry-run`。
+3. 先看估算不花錢：`pnpm distill --specs <suanomics>/docs/prompt-specs/agents --url <YouTube 影片網址> --dry-run`。
 4. 真跑蒸餾：拿掉 `--dry-run`，完成後最後一行印出 run 目錄。
-5. 編譯候選：`pnpm compile --run <run 目錄> --specs <suanomics>/docs/prompt-specs`。
+5. 編譯候選：`pnpm compile --run <run 目錄> --specs <suanomics>/docs/prompt-specs/agents`。
 
 ## 輸入：目標 prompt 規格檔
 
-規格檔是 suanomics 的 `docs/prompt-specs/<agent>.md`，由 suanomics 的測試從程式常數產生。baguanomics 從中讀四樣東西，格式不符就丟錯：
+規格檔是 suanomics 的 `docs/prompt-specs/agents/<agent>.md`，由 suanomics 的測試從程式常數產生。baguanomics 從中讀四樣東西，格式不符就丟錯：
 
 | 內容 | 用途 |
 |---|---|

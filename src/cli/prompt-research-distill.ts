@@ -124,7 +124,7 @@ function parseCli(argv: string[]): DistillOpts {
     },
   })
   if (!values.specs)
-    throw new Error('需要 --specs <suanomics/docs/prompt-specs 目錄>：禁用語從規格檔讀')
+    throw new Error('需要 --specs <suanomics/docs/prompt-specs/agents 目錄>：禁用語從規格檔讀')
   if (values.kind !== undefined && !['yt-transcript', 'skill-markdown', 'custom-text'].includes(values.kind))
     throw new Error(`--kind 不認得：${values.kind}`)
   return {
