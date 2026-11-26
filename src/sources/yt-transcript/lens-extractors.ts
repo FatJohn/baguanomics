@@ -59,16 +59,20 @@ const LENS_ITEM_KEYS = {
   reasoning_chains: 'chains',
   impacts: 'impacts',
   analyst_frames: 'frames',
-} as const satisfies Record<LensName, string>
+} as const satisfies { [K in LensName]: keyof LensOutputMap[K] & string }
 
 // 回應 schema 不帶數量上限（見 response-schemas.ts），條數只靠 prompt 約束；
 // 2026-11-26 實跑 Haiku 在 impacts 連續三次超過 12 條，重試無效，所以超出的部分直接截掉。
-function capItems(lens: LensName, raw: unknown): unknown {
+function capItems(lens: LensName, raw: unknown, onTruncate: (count: number, limit: number) => void): unknown {
   if (typeof raw !== 'object' || raw === null)
     return raw
   const key = LENS_ITEM_KEYS[lens]
   const items = (raw as Record<string, unknown>)[key]
-  return Array.isArray(items) ? { ...raw, [key]: items.slice(0, LENS_ITEM_LIMITS[lens]) } : raw
+  const limit = LENS_ITEM_LIMITS[lens]
+  if (!Array.isArray(items) || items.length <= limit)
+    return raw
+  onTruncate(items.length, limit)
+  return { ...raw, [key]: items.slice(0, limit) }
 }
 
 // 合規檢查只在 consolidator 輸出層做（Layer 4）。
@@ -91,7 +95,9 @@ export async function runLens<T extends LensName>(
         schema: LENS_RESPONSE_SCHEMAS[lens],
         timeoutMs: TIMEOUT_MS,
       })
-      const parsed = LENS_SCHEMAS[lens].parse(capItems(lens, raw)) as LensOutputMap[T]
+      const capped = capItems(lens, raw, (count, limit) =>
+        logger.emit('lens.truncated', { episode: episodeId, lens, count, limit }, 'warn'))
+      const parsed = LENS_SCHEMAS[lens].parse(capped) as LensOutputMap[T]
       logger.emit('lens.done', { episode: episodeId, lens })
       return parsed
     }

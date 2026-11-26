@@ -2,7 +2,8 @@ import type { LensName } from './prompts.js'
 import { z } from 'zod'
 
 // 傳給 Output.object 的回應形狀。刻意不放長度、數量與數值範圍：SDK 端用這份嚴格驗證，
-// 超限就整筆丟失；限制留給 schemas.ts 的領域 schema，違反時由各 stage 的重試迴圈處理。
+// 超限就整筆丟失；限制留給 schemas.ts 的領域 schema，違反時由各 stage 的重試迴圈處理，
+// 例外是 lens 的條數：超出上限由 lens-extractors.ts 截斷，不重試。
 
 const segmentRef = z.object({ startSec: z.number().int(), endSec: z.number().int() })
 

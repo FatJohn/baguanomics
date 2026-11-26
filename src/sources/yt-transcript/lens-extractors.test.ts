@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -112,6 +112,12 @@ describe('runLens', () => {
     expect(mockCall).toHaveBeenCalledTimes(1)
     expect(result.impacts).toHaveLength(12)
     logger.close()
+    const truncated = readFileSync(join(dir, 'run-log.jsonl'), 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map(line => JSON.parse(line) as Record<string, unknown>)
+      .find(r => r.event === 'lens.truncated')
+    expect(truncated).toMatchObject({ level: 'warn', lens: 'impacts', count: 15, limit: 12 })
   })
 })
 
