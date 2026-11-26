@@ -1,5 +1,5 @@
 import type { CompiledCandidate } from './compiler.js'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { loadSpecs } from '../spec/load-specs.js'
 import { MergedDraftSchema } from '../types.js'
@@ -26,6 +26,8 @@ export async function runCompile(p: RunCompileParams): Promise<RunCompileResult>
   const candidates = compileCandidates(specs, draft)
 
   const outDir = resolve(p.runDir, 'compiled')
+  // 每次重建：agent 改名或改成 none 後，舊候選留著會被當成這次的結果。
+  await rm(outDir, { recursive: true, force: true })
   await mkdir(join(outDir, 'candidates'), { recursive: true })
   await mkdir(join(outDir, 'diffs'), { recursive: true })
   const writtenPaths: string[] = []

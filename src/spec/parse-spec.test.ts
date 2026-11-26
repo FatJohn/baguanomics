@@ -94,6 +94,11 @@ describe('parsePromptSpec', () => {
     expect(parsePromptSpec(md).forbiddenPhrases).toEqual(['真的'])
   })
 
+  it('收尾 fence 帶行尾空白或更長時也算收尾', () => {
+    const md = spec(['## 現行 prompt', '', '### `A`', `${FENCE}text`, '甲', `${FENCE}\`  `, '', '### `B`', `${FENCE}text`, '乙', FENCE].join('\n'))
+    expect(parsePromptSpec(md).prompts).toEqual([{ name: 'A', text: '甲' }, { name: 'B', text: '乙' }])
+  })
+
   it('換行是 CRLF 時也讀得出', () => {
     const md = spec(['## 現行 prompt', '', '### `A`', `${FENCE}text`, '甲', FENCE].join('\n')).replace(/\n/g, '\r\n')
     expect(parsePromptSpec(md).prompts).toEqual([{ name: 'A', text: '甲' }])

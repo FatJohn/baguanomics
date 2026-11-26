@@ -36,6 +36,11 @@ function isFrameStyle(v: string): v is FrameStyle {
   return (FRAME_STYLES as readonly string[]).includes(v)
 }
 
+function closesFence(line: string, open: string): boolean {
+  const t = line.trim()
+  return /^`+$/.test(t) && t.length >= open.length
+}
+
 // prompt 全文裡常有 `#` 標題與條列，標記每一行是否落在 fence 內（含開頭與收尾行），找段落時跳過。
 function fencedLines(lines: string[]): boolean[] {
   const fenced: boolean[] = []
@@ -49,7 +54,7 @@ function fencedLines(lines: string[]): boolean[] {
     }
     else {
       fenced.push(true)
-      if (ticks && ticks.length >= open.length && line.trim() === ticks)
+      if (closesFence(line, open))
         open = null
     }
   }
@@ -98,7 +103,7 @@ function parsePrompts(lines: string[], fenced: boolean[], file: string): SpecPro
     const fence = lines[fenceLine]?.match(/^(`{5,})text$/)?.[1]
     if (!fence)
       throw new Error(`${file}: ${name} 後面要接至少五個反引號的 text fence`)
-    const close = lines.indexOf(fence, fenceLine + 1)
+    const close = lines.findIndex((l, j) => j > fenceLine && closesFence(l, fence))
     if (close < 0)
       throw new Error(`${file}: ${name} 的 fence 沒有收尾`)
     prompts.push({ name, text: lines.slice(fenceLine + 1, close).join('\n') })

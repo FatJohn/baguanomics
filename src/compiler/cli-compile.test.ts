@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -41,6 +41,14 @@ describe('runCompile', () => {
     expect(summary.skippedAgents).toEqual(['news-classifier', 'podcast-writer'])
     expect(summary.candidates).toHaveLength(2)
     expect(summary.candidates[0].addedLines).toBeGreaterThan(0)
+  })
+
+  it('重跑時先清掉 compiled 下的舊檔，不留已不存在的候選', async () => {
+    const stale = join(runDir, 'compiled/candidates/old-agent.OLD_PROMPT.txt')
+    mkdirSync(dirname(stale), { recursive: true })
+    writeFileSync(stale, 'stale', 'utf8')
+    await runCompile({ runDir, specsDir: SPECS_DIR })
+    expect(existsSync(stale)).toBe(false)
   })
 
   it('run 目錄沒有 merged draft 時丟錯', async () => {
