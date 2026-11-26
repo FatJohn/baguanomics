@@ -103,6 +103,16 @@ describe('runLens', () => {
     expect(result.entities[0]?.kind).toBe('sector')
     logger.close()
   })
+
+  it('truncates items beyond the lens limit instead of retrying', async () => {
+    const impact = { sector: '半導體', direction: 'positive', timeHorizon: 'short', reasoning: '需求回溫。' }
+    mockReturns({ episodeId: 'ep1', impacts: Array.from({ length: 15 }).fill(impact) })
+    const logger = createLogger({ runId: 'r3', runDir: dir })
+    const result = await runLens('impacts', 'fake transcript', 'ep1', logger, TEST_YT_VARS)
+    expect(mockCall).toHaveBeenCalledTimes(1)
+    expect(result.impacts).toHaveLength(12)
+    logger.close()
+  })
 })
 
 describe('runAllLenses', () => {
