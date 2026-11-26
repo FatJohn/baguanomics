@@ -49,7 +49,52 @@ describe('parsePromptSpec', () => {
     expect(parsed.garnishTerms).toEqual(['值得關注'])
   })
 
-  it('cRLF 換行也讀得出', () => {
+  it('prompt 內文裡的 # 與 ## 標題不會被當成段落邊界', () => {
+    const md = spec([
+      '## 現行 prompt',
+      '',
+      '### `A`',
+      `${FENCE}text`,
+      '# 字數預算',
+      '## 輸入示例',
+      '- 不是禁用語',
+      FENCE,
+      '',
+      '### `B`',
+      `${FENCE}text`,
+      '乙',
+      FENCE,
+      '',
+      '## 合規',
+      '',
+      '### 禁用語',
+      '',
+      '- 建議買',
+    ].join('\n'))
+    const parsed = parsePromptSpec(md)
+    expect(parsed.prompts.map(p => p.name)).toEqual(['A', 'B'])
+    expect(parsed.prompts[0]?.text).toBe('# 字數預算\n## 輸入示例\n- 不是禁用語')
+    expect(parsed.forbiddenPhrases).toEqual(['建議買'])
+  })
+
+  it('fence 內出現與段落標題相同的行時，仍以 fence 外的標題為準', () => {
+    const md = spec([
+      '## 現行 prompt',
+      '',
+      '### `A`',
+      `${FENCE}text`,
+      '### 禁用語',
+      '- 假的',
+      FENCE,
+      '',
+      '### 禁用語',
+      '',
+      '- 真的',
+    ].join('\n'))
+    expect(parsePromptSpec(md).forbiddenPhrases).toEqual(['真的'])
+  })
+
+  it('換行是 CRLF 時也讀得出', () => {
     const md = spec(['## 現行 prompt', '', '### `A`', `${FENCE}text`, '甲', FENCE].join('\n')).replace(/\n/g, '\r\n')
     expect(parsePromptSpec(md).prompts).toEqual([{ name: 'A', text: '甲' }])
   })

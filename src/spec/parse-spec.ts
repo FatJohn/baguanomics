@@ -36,15 +36,35 @@ function isFrameStyle(v: string): v is FrameStyle {
   return (FRAME_STYLES as readonly string[]).includes(v)
 }
 
-function sectionRange(lines: string[], heading: string): [number, number] | null {
-  const start = lines.indexOf(heading)
+// prompt 全文裡常有 `#` 標題與條列，標記每一行是否落在 fence 內（含開頭與收尾行），找段落時跳過。
+function fencedLines(lines: string[]): boolean[] {
+  const fenced: boolean[] = []
+  let open: string | null = null
+  for (const line of lines) {
+    const ticks = line.match(/^(`{3,})/)?.[1]
+    if (open === null) {
+      if (ticks)
+        open = ticks
+      fenced.push(ticks !== undefined)
+    }
+    else {
+      fenced.push(true)
+      if (ticks && ticks.length >= open.length && line.trim() === ticks)
+        open = null
+    }
+  }
+  return fenced
+}
+
+function sectionRange(lines: string[], fenced: boolean[], heading: string): [number, number] | null {
+  const start = lines.findIndex((l, i) => l === heading && !fenced[i])
   if (start < 0)
     return null
   const level = heading.match(/^#+/)?.[0].length ?? 2
   let end = lines.length
   for (let i = start + 1; i < lines.length; i++) {
     const m = lines[i]?.match(/^(#+) /)
-    if (m?.[1] && m[1].length <= level) {
+    if (!fenced[i] && m?.[1] && m[1].length <= level) {
       end = i
       break
     }
@@ -52,15 +72,21 @@ function sectionRange(lines: string[], heading: string): [number, number] | null
   return [start + 1, end]
 }
 
-function bullets(lines: string[], heading: string): string[] {
-  const range = sectionRange(lines, heading)
+function bullets(lines: string[], fenced: boolean[], heading: string): string[] {
+  const range = sectionRange(lines, fenced, heading)
   if (!range)
     return []
-  return lines.slice(range[0], range[1]).filter(l => l.startsWith('- ')).map(l => l.slice(2))
+  const out: string[] = []
+  for (let i = range[0]; i < range[1]; i++) {
+    const line = lines[i] ?? ''
+    if (!fenced[i] && line.startsWith('- '))
+      out.push(line.slice(2))
+  }
+  return out
 }
 
-function parsePrompts(lines: string[], file: string): SpecPrompt[] {
-  const range = sectionRange(lines, '## 現行 prompt')
+function parsePrompts(lines: string[], fenced: boolean[], file: string): SpecPrompt[] {
+  const range = sectionRange(lines, fenced, '## 現行 prompt')
   if (!range)
     throw new Error(`${file}: 找不到「## 現行 prompt」段`)
   const prompts: SpecPrompt[] = []
@@ -83,14 +109,15 @@ function parsePrompts(lines: string[], file: string): SpecPrompt[] {
 
 export function parsePromptSpec(markdown: string, file = 'spec'): PromptSpec {
   const lines = markdown.replace(/\r\n/g, '\n').split('\n')
+  const fenced = fencedLines(lines)
   const frameStyle = meta(lines, 'frame-style', file)
   if (!isFrameStyle(frameStyle))
     throw new Error(`${file}: frame-style 要是 ${FRAME_STYLES.join('／')}，收到 ${frameStyle}`)
   return {
     agent: meta(lines, 'agent', file),
     frameStyle,
-    prompts: parsePrompts(lines, file),
-    forbiddenPhrases: bullets(lines, '### 禁用語'),
-    garnishTerms: bullets(lines, '### 抽象評價贅詞'),
+    prompts: parsePrompts(lines, fenced, file),
+    forbiddenPhrases: bullets(lines, fenced, '### 禁用語'),
+    garnishTerms: bullets(lines, fenced, '### 抽象評價贅詞'),
   }
 }
