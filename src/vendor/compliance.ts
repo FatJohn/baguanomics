@@ -140,13 +140,12 @@ function isAttributed(verb: Position, actors: Position[]): boolean {
   })
 }
 
-export function containsTickerDirection(text: string): TickerDirectionMatch {
+export function findTickerDirections(text: string): TickerDirectionMatch[] {
   const tickers = findTickers(text)
   const companies = findTerms(text, TW_STOCK_NAMES)
   const actors = findTerms(text, ACTOR_SUBJECTS)
   const verbs = findTerms(text, DIRECTION_VERBS).filter(v => !isAttributed(v, actors))
-  if (verbs.length === 0)
-    return { hit: false }
+  const matches: TickerDirectionMatch[] = []
 
   for (const verb of verbs) {
     for (const target of [...tickers, ...companies]) {
@@ -156,14 +155,18 @@ export function containsTickerDirection(text: string): TickerDirectionMatch {
       )
       if (distance <= PROXIMITY) {
         const isTicker = tickers.includes(target)
-        return {
+        matches.push({
           hit: true,
           verb: verb.value,
           snippet: buildSnippet(text, target, verb),
           ...(isTicker ? { ticker: target.value } : { company: target.value }),
-        }
+        })
       }
     }
   }
-  return { hit: false }
+  return matches
+}
+
+export function containsTickerDirection(text: string): TickerDirectionMatch {
+  return findTickerDirections(text)[0] ?? { hit: false }
 }
