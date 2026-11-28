@@ -174,11 +174,17 @@ export function buildConsolidatorSystemPrompt(vars: DeepPipelinePromptVars): str
 ${complianceClause(vars)}`
 }
 
-export function buildConsolidatorRevisionUserPrompt(draft: string, hits: readonly string[]): string {
-  return `下面是你上一版的 Digest，合規掃描命中以下字串，整份不得再出現：
-${hits.map(h => `- ${h}`).join('\n')}
+export function buildConsolidatorRevisionUserPrompt(draft: string, phrases: readonly string[], tickerPairs: readonly string[]): string {
+  const sections: string[] = []
+  if (phrases.length > 0)
+    sections.push(`以下禁用詞整份不得再出現：\n${phrases.map(p => `- ${p}`).join('\n')}`)
+  if (tickerPairs.length > 0)
+    sections.push(`以下個股與方向詞出現在同一處，改成不帶個股方向的敘述（拿掉個股名稱或代號、或拿掉方向詞）：\n${tickerPairs.map(p => `- ${p}`).join('\n')}`)
+  return `這次不是重新萃取 L3 資料，而是修改你上一版的 Digest。合規掃描命中以下內容：
 
-請只改寫含上述字串的句子，改成中性分析敘述（可參考 system prompt 的替代詞對照），改寫時也不得用到 system prompt 列出的其他禁用詞；其餘段落、章節架構與長度原樣保留。輸出改寫後的完整 Digest。
+${sections.join('\n\n')}
+
+請只改寫命中的句子，改成中性分析敘述（可參考 system prompt 的替代詞對照），改寫時也不得用到 system prompt 列出的其他禁用詞；其餘段落、章節架構與長度原樣保留，不另外擴寫。輸出改寫後的完整 Digest。
 
 ---
 ${draft}`

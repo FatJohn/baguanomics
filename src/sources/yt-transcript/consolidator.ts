@@ -12,24 +12,35 @@ const MAX_OUTPUT_TOKENS = 32_000
 // 3 = initial + 2 retries
 export const CONSOLIDATOR_MAX_ATTEMPTS = 3
 
-interface Violation { reason: string, feedback: string[] }
+interface Hit { key: string, kind: 'phrase' | 'ticker', text: string }
+interface Violation { reason: string, hits: Hit[] }
+
+// containsTickerDirection 只回第一組；遮掉已回報 snippet 內的方向詞再掃，收齊所有組合。
+// 每輪至少遮掉一個方向詞，迴圈必定結束。
+function allTickerDirections(text: string): Hit[] {
+  const hits: Hit[] = []
+  let rest = text
+  for (let found = containsTickerDirection(rest); found.hit; found = containsTickerDirection(rest)) {
+    const target = found.ticker ?? found.company ?? 'unknown'
+    const verb = found.verb ?? 'unknown'
+    const snippet = found.snippet ?? ''
+    const key = `ticker_direction:${target}+${verb}`
+    if (!hits.some(h => h.key === key))
+      hits.push({ key, kind: 'ticker', text: `個股「${target}」與方向詞「${verb}」：「${snippet}」` })
+    const at = rest.indexOf(snippet)
+    const masked = snippet.replaceAll(verb, ' '.repeat(verb.length))
+    rest = at === -1 || masked === snippet ? rest.replaceAll(verb, ' '.repeat(verb.length)) : rest.slice(0, at) + masked + rest.slice(at + snippet.length)
+  }
+  return hits
+}
 
 function scan(text: string, forbiddenPhrases: readonly string[]): Violation | null {
-  const hitPhrases = forbiddenPhrases.filter(p => text.includes(p))
-  if (hitPhrases.length > 0)
-    return { reason: `forbidden:${hitPhrases[0]}`, feedback: hitPhrases.map(p => `「${p}」`) }
-
-  const tickerDirection = containsTickerDirection(text)
-  if (tickerDirection.hit) {
-    const target = tickerDirection.ticker ?? tickerDirection.company ?? 'unknown'
-    const verb = tickerDirection.verb ?? 'unknown'
-    return {
-      reason: `ticker_direction:${target}+${verb}`,
-      feedback: [`個股「${target}」與方向詞「${verb}」相鄰：「${tickerDirection.snippet ?? ''}」`],
-    }
-  }
-
-  return null
+  const hits: Hit[] = [
+    ...forbiddenPhrases.filter(p => text.includes(p)).map(p => ({ key: `forbidden:${p}`, kind: 'phrase' as const, text: `「${p}」` })),
+    ...allTickerDirections(text),
+  ]
+  const first = hits[0]
+  return first ? { reason: first.key, hits } : null
 }
 
 class ComplianceError extends Error {
@@ -46,15 +57,21 @@ export async function runConsolidator(
 ): Promise<string> {
   const input = JSON.stringify({ runId, episodes }, null, 2)
   let lastErr: unknown = new Error('consolidator failed after retries')
-  // 盲重試重寫一萬字、每次命中不同禁用語而不收斂（#2）；改成帶命中清單改寫上一版。
-  let revision: { draft: string, hits: string[] } | null = null
+  // 整份重寫一萬字每次會撞到不同禁用語、重試不收斂；只改寫上一版命中的句子才收斂。
+  let revision: { draft: string, hits: Hit[] } | null = null
 
   for (let attempt = 0; attempt < CONSOLIDATOR_MAX_ATTEMPTS; attempt++) {
     try {
       const { markdown } = await callStructured({
         stage: 'consolidator',
         system: buildConsolidatorSystemPrompt(vars),
-        user: revision ? buildConsolidatorRevisionUserPrompt(revision.draft, revision.hits) : input,
+        user: revision
+          ? buildConsolidatorRevisionUserPrompt(
+              revision.draft,
+              revision.hits.filter(h => h.kind === 'phrase').map(h => h.text),
+              revision.hits.filter(h => h.kind === 'ticker').map(h => h.text),
+            )
+          : input,
         schema: ConsolidatorResponse,
         timeoutMs: TIMEOUT_MS,
         maxOutputTokens: MAX_OUTPUT_TOKENS,
@@ -71,8 +88,9 @@ export async function runConsolidator(
     catch (err) {
       lastErr = err
       if (err instanceof ComplianceError) {
-        const earlier: string[] = revision?.hits.filter(h => !err.violation.feedback.includes(h)) ?? []
-        revision = { draft: err.draft, hits: [...err.violation.feedback, ...earlier] }
+        const current = err.violation.hits
+        const earlier: Hit[] = revision?.hits.filter(h => !current.some(c => c.key === h.key)) ?? []
+        revision = { draft: err.draft, hits: [...current, ...earlier] }
       }
       const retryable = err instanceof LlmOutputError
         || err instanceof ComplianceError
