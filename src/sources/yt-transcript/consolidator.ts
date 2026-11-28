@@ -2,7 +2,7 @@ import type { DeepPipelinePromptVars } from '../../pipeline/prompt-vars.js'
 import type { Logger } from './logger.js'
 import type { EpisodeL3 } from './schemas.js'
 import { callStructured, LlmOutputError } from '../../llm.js'
-import { containsTickerDirection } from '../../vendor/compliance.js'
+import { findTickerDirections } from '../../vendor/compliance.js'
 import { buildConsolidatorRevisionUserPrompt, buildConsolidatorSystemPrompt } from './prompts.js'
 import { ConsolidatorResponse } from './response-schemas.js'
 
@@ -15,21 +15,14 @@ export const CONSOLIDATOR_MAX_ATTEMPTS = 3
 interface Hit { key: string, kind: 'phrase' | 'ticker', text: string }
 interface Violation { reason: string, hits: Hit[] }
 
-// containsTickerDirection 只回第一組；遮掉已回報 snippet 內的方向詞再掃，收齊所有組合。
-// 每輪至少遮掉一個方向詞，迴圈必定結束。
 function allTickerDirections(text: string): Hit[] {
   const hits: Hit[] = []
-  let rest = text
-  for (let found = containsTickerDirection(rest); found.hit; found = containsTickerDirection(rest)) {
+  for (const found of findTickerDirections(text)) {
     const target = found.ticker ?? found.company ?? 'unknown'
     const verb = found.verb ?? 'unknown'
-    const snippet = found.snippet ?? ''
     const key = `ticker_direction:${target}+${verb}`
     if (!hits.some(h => h.key === key))
-      hits.push({ key, kind: 'ticker', text: `個股「${target}」與方向詞「${verb}」：「${snippet}」` })
-    const at = rest.indexOf(snippet)
-    const masked = snippet.replaceAll(verb, ' '.repeat(verb.length))
-    rest = at === -1 || masked === snippet ? rest.replaceAll(verb, ' '.repeat(verb.length)) : rest.slice(0, at) + masked + rest.slice(at + snippet.length)
+      hits.push({ key, kind: 'ticker', text: `個股「${target}」與方向詞「${verb}」：「${(found.snippet ?? '').replace(/\s+/g, ' ')}」` })
   }
   return hits
 }

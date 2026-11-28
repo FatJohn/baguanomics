@@ -155,6 +155,35 @@ describe('runConsolidator', () => {
     logger.close()
   })
 
+  it.each([
+    ['a second ticker shares the masked verb', '台積電轉多甲乙丙丁戊己庚辛轉多甲乙丙丁戊己庚辛壬癸子丑寅卯辰鴻海'],
+    ['two tickers pair with one verb', '鴻海甲乙丙丁戊己庚辛壬癸子丑寅卯辰台積電轉多'],
+  ])('reports every pair when %s', async (_, body) => {
+    mockReturns(COMPLIANT_SUPPLEMENT.replace('無關鍵事件', body), COMPLIANT_SUPPLEMENT)
+    const logger = createLogger({ runId: 'run-12', runDir: dir })
+    await runConsolidator(SAMPLE_L3, 'run-12', logger, { ...TEST_YT_VARS, forbiddenPhrases: [] })
+    expect(userOfCall(1)).toContain('「台積電」')
+    expect(userOfCall(1)).toContain('「鴻海」')
+    logger.close()
+  })
+
+  it('keeps each feedback item on one line when the snippet spans a line break', async () => {
+    mockReturns(COMPLIANT_SUPPLEMENT.replace('無關鍵事件', '台積電\n轉多'), COMPLIANT_SUPPLEMENT)
+    const logger = createLogger({ runId: 'run-13', runDir: dir })
+    await runConsolidator(SAMPLE_L3, 'run-13', logger, { ...TEST_YT_VARS, forbiddenPhrases: [] })
+    const line = userOfCall(1).split('\n').find(l => l.includes('個股「台積電」'))
+    expect(line).toMatch(/」$/)
+    logger.close()
+  })
+
+  it('keeps revising the last flagged draft after an empty response', async () => {
+    mockReturns(COMPLIANT_SUPPLEMENT.replace('無關鍵事件', '值得追蹤'), '', COMPLIANT_SUPPLEMENT)
+    const logger = createLogger({ runId: 'run-14', runDir: dir })
+    await runConsolidator(SAMPLE_L3, 'run-14', logger, TEST_YT_VARS)
+    expect(userOfCall(2)).toContain('「值得追蹤」')
+    logger.close()
+  })
+
   it('does not repeat a ticker-direction pair whose surrounding text changed', async () => {
     mockReturns(
       COMPLIANT_SUPPLEMENT.replace('無關鍵事件', '台積電轉多 A'),
